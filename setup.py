@@ -20,7 +20,7 @@ from distutils.command.build import build
 
 version_info = {
     'name': 'bluepass',
-    'version': '0.1',
+    'version': '0.2',
     'description': 'The Bluepass password manager.',
     'author': 'Geert Jansen',
     'author_email': 'geertj@gmail.com',
