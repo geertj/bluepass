@@ -1,0 +1,78 @@
+Bluepass Security
+=================
+
+This document provides a small summary of the security in Bluepass.
+
+Bluepass security works on two levels:
+
+ * 
+
+
+Diceware passwords have 12.92 bits of entropy per word. This gives
+the following table of password strengths:
+
+Length  Strength
+------  --------
+1       12.92
+2       25.84
+3       38.76
+4       51.68
+5       64.60
+6       77.52
+
+Threat model
+============
+
+The passwords are used to encrypt the private RSA keys in a password vault.
+These keys never leave the current system. If a system is compromised, we
+assume the vault is exposed.
+
+The passwords are used as input in PBKDF2 with a variable number of iterations
+and a 128-bit random salt. The 128-bit random salt prevents any precomputed
+rainbow table attack, as well as checking multiple passwords in parallel. The
+salt is too big for that.
+
+The number of iterations is tuned dynamically so that the PBKDF2 calculalation
+takes between 0.1 and 0.2 seconds on the host system (with a minimum of 4096).
+
+The actual passwords are encrypted with 128-bit AES with a fully random key.
+The key is encrypted with 2048-bit RSA. The RSA private key is then encrypted
+with a key derived from a password with the PBKDF2 key derivation function. A
+128-bit random salt is used with PBKDF2, and a random number of iterations that
+brings the running time of a single round between 0.1 and 0.2 seconds.
+
+Assuming RSA and AES stay unbroken, a brute force attack against the password
+is an attacker's best way to get into a vault. This is because the entropy of
+the password typically lower than the 128 bits of AES and the 112-bit
+equivalent entropy of a 2048-bit RSA key.
+
+A brute force attack against our password is made more difficult by salting and
+key stretching. The 128-bit random salt we use effectively prevents any
+precomputed rainbow table attack, as well as any parallel attack on all the
+keys in the vault. The attacker will have to do full PBKDF2 calculations for each
+password in the vault individually. Bluepass uses PBKDF2's key stretching with
+an random iteration count so that the running time the algorithm is around 0.2
+seconds (with a minimum of 4096 rounds). 
+
+We assume the followign classes of adversaries:
+
+ * Home user. He will have access to his own PC. He will be able to do about
+   300 million PBKDF2 calculations per year.
+ * Organized crime. We assume their available computing capacity is about 1.000
+   time that of a home user.
+ * National security agency. We assume their available computing capacity is
+   about 1.000 times that of an organized crime.
+
+We then assume Moore's law will continue to hold, and that the computing
+capacity will double every 2 years. This gives us the following table:
+
+Key Length  Entropy   Home User  Organized Crime  Govt Agency
+----------  --------  ---------  ---------------  -----------
+1           12.92     13 mins    
+2           25.84     70 days
+3           38.76     10 years
+4           51.68     37 years
+5           64.60     62 years
+6           77.52     88 years
+
+

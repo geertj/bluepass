@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   width="744.09448819"
+   height="1052.3622047"
+   id="svg2"
+   version="1.1"
+   inkscape:version="0.48.1 r9760"
+   sodipodi:docname="menu.svg"
+   inkscape:export-filename="/home/geertj/Projects/password/lib/mpm/platform/qt/menu.png"
+   inkscape:export-xdpi="6.5269756"
+   inkscape:export-ydpi="6.5269756">
+  <defs
+     id="defs4" />
+  <sodipodi:namedview
+     id="base"
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1.0"
+     inkscape:pageopacity="0.0"
+     inkscape:pageshadow="2"
+     inkscape:zoom="0.7"
+     inkscape:cx="342.91851"
+     inkscape:cy="504.55995"
+     inkscape:document-units="px"
+     inkscape:current-layer="layer1"
+     showgrid="false"
+     inkscape:window-width="1382"
+     inkscape:window-height="756"
+     inkscape:window-x="433"
+     inkscape:window-y="143"
+     inkscape:window-maximized="0" />
+  <metadata
+     id="metadata7">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type
+           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+        <dc:title></dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <rect
+       style="fill:none;stroke:#4d4d4d;stroke-width:30;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0"
+       id="rect3863"
+       width="297.14288"
+       height="267.35266"
+       x="118.57143"
+       y="373.58093" />
+    <rect
+       style="fill:#ffffff;stroke:none;stroke-width:1;stroke-linecap:round;stroke-miterlimit:2.09999989999999981;stroke-dasharray:none;stroke-dashoffset:0"
+       id="rect3867"
+       width="141.42857"
+       height="88.571426"
+       x="194.28572"
+       y="596.64789" />
+    <path
+       sodipodi:type="star"
+       style="fill:#4d4d4d;stroke:#4d4d4d;stroke-width:35.31973262000000346;stroke-linecap:round;stroke-miterlimit:2.09999989999999981;stroke-dasharray:none;stroke-dashoffset:0"
+       id="path3865"
+       sodipodi:sides="3"
+       sodipodi:cx="190"
+       sodipodi:cy="409.50504"
+       sodipodi:r1="122.93187"
+       sodipodi:r2="61.465935"
+       sodipodi:arg1="1.5707963"
+       sodipodi:arg2="2.6179939"
+       inkscape:flatsided="false"
+       inkscape:rounded="0"
+       inkscape:randomized="0"
+       d="m 190,532.4369 -53.23106,-92.1989 -53.231064,-92.1989 106.462124,0 106.46212,0 -53.23106,92.1989 z"
+       inkscape:transform-center-y="19.158516"
+       transform="matrix(0.80368841,0,0,0.62338665,110.68518,340.50474)"
+       inkscape:export-filename="/home/geertj/Projects/password/lib/mpm/platform/qt/path3865.png"
+       inkscape:export-xdpi="6.5269756"
+       inkscape:export-ydpi="6.5269756" />
+    <rect
+       style="fill:none;stroke:none"
+       id="rect3869"
+       width="320.71793"
+       height="41.42857"
+       x="104.85715"
+       y="314.36221" />
+  </g>
+</svg>

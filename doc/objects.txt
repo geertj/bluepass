@@ -1,0 +1,113 @@
+
+
+# Store the vault/node/version unencrypted. This is required because we need
+# it for efficient replication, and one of the security assumptions we have is
+# that we do not 
+
+# vaults collection: this is not replicated
+
+{
+    'id': 'uuid',
+    '_type': 'Vault',
+    'name': 'name',
+    'node': 'uuid',
+    'keys': {
+        'sign': {
+            'keytype': 'rsa',
+            'public': 'base64(asn1)',
+            'private': 'base64(encrypt(asn1,key,iv))',
+            'encinfo': {
+                'algo': 'aes-cbc-pkcs5',
+                'iv': 'base64(random)'
+                'kdf': 'pbkdf2-hmac-sha1',
+                'salt': 'base64(random)'
+                'count': n,
+                'length': bytes,
+            }
+            'pwcheck': {
+                'algo': 'hmac-magic-cookie-sha1',
+                'random': 'base64(random)',
+                'cookie': 'base64(hmac(key,random))'
+            }
+        },
+        'encrypt': { /* as sign */ },
+    }
+}
+
+
+# items collection: this is replicated
+{
+    'id': 'uuid',
+    '_type': 'Item',
+    'vault': 'uuid',
+    'origin': {
+        'node': 'uuid',
+        'seqnr': 2
+    }
+    'payload': {
+        '_type': 'XXX',
+        ...
+    },
+    'signature': {
+        'algo': 'rsa-pss-sha1',
+        'blob': 'xxx'
+    }
+}
+
+# Payload types
+
+{
+    'id': 'uuid',
+    '_type': 'Certificate',
+    'node': 'uuid',
+    'name': 'name',
+    'keys': {
+        'sign': { 'key': 'xxx', 'keytype': 'rsa' }
+        'encrypt': { 'key': 'xxx', 'keytype': 'rsa' }
+    },
+    'restrictions': { 'synconly': false }
+}
+
+{
+    '_type': 'EncryptedPayload'
+    'algo': 'aes-cbc-pkcs5',
+    'iv': 'xxxx',
+    'blob': 'yyyy'
+    'keyalgo': 'rsa-oaep',
+    'keys' : { 'uuid': 'rsa encrypted symkey', ... }
+}
+
+
+# Contents of 'EncryptedPayload'
+
+{
+    'id': 'uuid',
+    'parent': 'uuid',
+    '_type': 'Version',
+    'created_at': int
+    'deleted': bool,
+    'version': {
+        '_type': 'Type',
+        'id': 'uuid'
+        ...
+    }
+}
+
+# Inside a version:
+
+{
+    '_type': 'Password'
+    'id': 'uuid',
+    'name': 'name',
+    'comment': 'comment',
+    'group': 'group',
+    'password': 'password',
+    'generator': '[abc]',
+}
+
+{
+    '_type': 'Group',
+    'id': 'uuid',
+    'name': 'name'
+    'comment': 'comment'
+}

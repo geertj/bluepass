@@ -1,0 +1,80 @@
+Bluepass Synchronization
+========================
+
+A robust, secure and user friendly synchronization framework is one of the most
+important features of Bluepass. In fact, Bluepass can be seen as a password
+management application on top of the Bluepass synchronziation protocol. Other
+types of applications on top of the same synchronization protocol could be
+created as well.
+
+First some definitions:
+
+ * A Bluepass instance is a copy of the Bluepass software running on a computer
+   system.
+ * A Bluepass database is a single file where a Bluepass instance stores its
+   data. There may be multiple Bluepass instances running on the same computer
+   system at any given time, but each will have a different database.
+ * A database contains multiple vaults. The vault is the basic unit of
+   synchronization. Each vault is replicated between one or more instances.
+   Each vault is identified in a globally unique way by a random UUID.
+ * Within a vault there are one or more nodes, each node corresponding to an
+   instance this vault is replicated to. Nodes are never shared between vaults.
+   So in case one instance has multiple vaults, it will have multiple nodes as
+   well, one for each vault. Each node is identified uniquely within a vault by
+   a random UID.
+
+Bluepass Database
+=================
+
+A Bluepass database contains meta-data and replicated items. The meta-data
+includes the local vault name, cryptographic keys specific to the instance, and
+various settings and user preferences. Meta-data is specific to the instance
+and never replicated.
+
+Replicated items are the heart of the synchronization protocol. Each item is
+stored in the database. The set of replicated items is a strict append-only
+set. Items are never deleted only added (at some point we may implement pruning
+to get rid of older items that are not needed anymore by the application, but
+that would be a local optimization specific to the application and would not
+impact synchronization at all).
+
+Each item has a few important attributes:
+
+ * A type that identifies what kind of item this is.
+ * A UUID that uniquely identifies the item in the vault.
+ * An "origin", conisisting of the UUID of the node that created the item, and
+   a monotonically increasing sequence number local to the node.
+ * A cryptographic signature by made by the originating node.
+
+Two types of items exist currently:
+
+ * Certificates. These are using for establishing trust between different nodes
+   in a vault.
+ * Encrypted items. These contain the actual passwords or other secret data.
+   As their name implies, encrypted items are stored encrypted.
+
+(* A future version may add pruning of older versions. But this would be a
+local operation on a Bluepass instance and woudl not be replicated. *
+
+Synchronization Protocol
+========================
+
+When a vault is initially created, it have just one node. The database for a
+vault will contain, in addition to some meta-data, one self-signed certificate
+for the creation node, and zero encrypted items.
+
+Encrypted items can now be added to the vault by the user. Each item wil refer to
+the creation node as the origin, and will have a sequence number starting at 0
+counting up monotonically.
+
+To synchronize this vault with another Bluepass instances, a synchronization
+protocol is defined. This synchronization protocol ("syncapi") is a simple
+RESTful protocol that transfers JSON messages over HTTP. There are two basic
+operations:
+
+ * Pairing: establish trust with a new instance on the network for a specific
+   vault. This operation will create a new node, and will add two certificates
+   to the vault: one signed by the original node for the new node, and one the
+   other way around. Pairing needs to happen before vaults can be synchronized.
+ * Synchronization: the actual trasfer of replicated items between different
+   bluepass instances that share a vault that was previously paired.

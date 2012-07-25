@@ -1,0 +1,12 @@
+*.pyc
+*.so
+lib/bluepass/_version.py
+build/
+dist/
+trash/
+*.egg-info
+.*.swp
+.*.swo
+test.conf
+header
+*~

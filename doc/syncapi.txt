@@ -1,0 +1,167 @@
+Synchronization API
+===================
+
+The Bluepass synchronization protocol ("syncapi") is a simple RESTful protocol
+that transfers JSON messages over HTTP over SSL/TLS.
+
+Authentication
+==============
+
+We use two different custom authentication mechanisms, one for paring and one
+for synchronizing. Both make use of the SSL/TLS channel bindings as a unique
+per-connection nonce value and calculate some cryptographic authenticator based
+on these. For more information on SSL/TLS channel bindings, see [1]_.
+
+Pairing
+-------
+
+Our pairing authentication scheme is called HMAC_CB. Here a random PIN code
+that is shared between client and server and is transferred by and
+out-of-band method. The client calculates an authenticator as (CB refers to the
+channel bindings):
+
+    client_auth := HMAC(PIN-1, CB)
+
+and sets the "Authorization" HTTP header to this value. Instead the server
+calculated:
+
+    server_auth := HMAC(PIN+1, CB)
+
+Which value is set in the HTTP reponse header "Authentication-Info".
+
+The PIN code is a fixed number of digits, padded with zeros at the left. The
+calculation of PIN-1 and PIN+1 must wrap around such that PIN+1 of a PIN code
+with all '9's is all '0's, and PIN-1 of a PIN with all '0's is all '9's.
+
+HMAC_CB provides good security of the paring. By using a PIN code to
+authenticate the channel bindings, we make sure that our pairing partner is who
+we think it is.
+
+The length of the PIN code should be chosen to provide a good compromise
+between security and usability. Bluepas by default uses a 6-digit PIN code.
+This should provide adequate security in most circumstances. During paring, a
+user is given one chance to enter a correct PIN code. This means that there's a
+1/1.000.000 chance that an active attacker that has mounted a man-in-the-middle
+attach could guess the right PIN code. Given that pairings happen only very
+infrequently, require close proximity on the same LAN, given that MITM attacks
+are difficult, and that the mechanism has a very small chance of success and a
+very high chance of being detected, i do not think the risk/reward ratio is
+there for an attacker. If you are still concerned, then do not pair over a busy
+Wifi network such as in an airport, but instead pair over a wired trusted
+network.
+
+Note that once a pairing is succesfully set up, the PIN code has no more
+meaning and could even be shared publicly. It is only required during the
+pairing phase to prevent MITM attacks.
+
+HMAC_CB is safe against replay attacks because the channel bindings are unique
+for a specific SSL connection instance and the PIN code is generated new for
+each connection attempt. The authentication is also mutual as both the client
+and the server present an authenticator to each other.
+
+Synchronziation
+---------------
+
+The synchronizatinon authentication scheme is called RSA_CB. Here the SSL
+channel bindings are signed by the vault's signing key using the
+RSA-PSS-SHA1 signature scheme. This provides mutual authentication and
+resistance against replay attacks. The best possible active attack
+without breaking the DH or RSA key agreement protocol used in SSL would be
+to guess the SSL channel bindings which are 12 random bytes (96 bits) for
+TLS and 36 random bytes (of which 32 bytes = 256 bits are derived from each
+of the server and client).
+
+SSL Authentication
+------------------
+
+Because we implemented authentication on top of SSL and we tie that
+authentication to the SSL channel bindings, we do not require authentication at
+the SSL level. The current version of Bluepass makes use of this by using
+anonymous Diffie-Hellman key agreement effectively eliminating any
+authentication at the SSL level.  This saves us from having to manage RSA keys
+and certificates, and provides perfect forward secrecy.
+
+
+Protocol Exchanges
+==================
+
+Pairing
+-------
+
+Pairing via the syncapi involves two steps.  In step 1, a new pairing request
+is generated. This will show a message to the user and if he accepts, the
+following response will be given::
+
+  POST /api/vaults/<vault>/pair HTTP/1.1
+  Content-Type: text/json
+
+  {
+    'name': 'ClientName', 
+    'restrictions': {}
+  }
+
+  HTTP/1.1 401 Unauthorized
+  WWW-Authenticate: HMAC_CB kxid=xxx
+
+The previous step generated a PIN code on the remote peer. This PIN code needs
+to be communicated via an out-of-band way to our end of the connection. Then
+step 2 can happen::
+
+  POST /api/vaults/<vault>/pair
+  Content-Type: text/json
+  Authorization: HMAC_CB ${kxid}:${client_auth}
+
+  { /* same body */ }
+
+  HTTP/1.1 200 OK
+  Authentication-Info: HMAC_CB ${kxid}:${server_auth}
+
+  {
+    'name': 'ServerName',
+    'node': 'uuid',
+    'keys': { 'sign': {}, 'encrypt': {} },
+    'restrictions': {}
+  }
+
+
+Synchronization
+---------------
+
+Two synchronization directions exist: inboud, from the server to the client,
+and outbound, from the client to the server. A synchronization exchange starts
+with an inbound synchronization request::
+
+  GET /api/vaults/<vault>/items?vector=xxxx HTTP/1.1
+  Accept: text/json
+  Authorization: RSA_CB nodeid:xxxxxxxxxxx
+
+  HTTP/1.1 200 OK
+  Authentication-Info RSA_CB nodeid:xxxxxxxxxxxxx
+  Content-Type: text/json
+  X-Vector: xxxxxx
+
+  [ {}, {} ]
+
+The "vector" URL parameter specifies the latest sequence number for each node
+that the client currently has. It is encoded as "uuid:seqno,uuid=seqno,...".
+
+The result of this GET method will be (a possibly empty) list of items.
+
+If the server does not set the "X-Vector" header in the response, the
+synchronization is complete. If the X-Vector header was set, the server is
+requesting an outbound push relative to the vector specifies, as follows::
+
+  POST /api/vaults/<vault>/items
+  Content-Type: text/json
+
+  [ {}, {} ]
+
+  HTTP/1.1 200 OK
+
+This outbound push needs to happen in the same SSL connection as the inbound
+push, and no authentication is required.
+
+Note that in this second outbound push, no further authentication is required.
+Outbound pushes are an optimization, and need not be requested by the server.
+
+.. [1] http://tools.ietf.org/html/rfc5929

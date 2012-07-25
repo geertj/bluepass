@@ -1,0 +1,15 @@
+
+
+The most succesfull decisons that i feel i've taken during development
+
+ * Using gevent instead of threads. There have been countless times that i
+   asked myself: "is this safe against concurrency?" Almost always the answer
+   was: "yes, under gevent it is, but had i used threads it would not have
+   been".
+
+ * Separating the frontend from the backend with a message bus. Greatly
+   assisted in testability of the backend, and portability to other platforms'
+   native UIs.
+
+ * Using Python dictionaries for many objects instead of real Python objects.
+   This greatly faciliated serialization via the different APIs (via JSON).
