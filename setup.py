@@ -7,7 +7,7 @@ import os.path
 import time
 import datetime
 import inspect
-import subprocess
+from subprocess import Popen, PIPE
 import socket
 
 from setuptools import setup, Extension
@@ -46,6 +46,16 @@ def buildroot():
     return os.path.split(absname)[0]
 
 
+def check_output(command):
+    """Python 2.6 does not have a subprocess.check_output()."""
+    process = Popen(command, stdout=PIPE)
+    output, err = process.communicate()
+    status = process.poll()
+    if status:
+        raise RuntimeError('"%s" exited with status %s', (command, status))
+    return output
+
+
 def create_version(exclude_buildinfo=False):
     """Store the GIT version information in _version.py."""
     fname = os.path.join('lib', 'bluepass', '_version.py')
@@ -54,7 +64,7 @@ def create_version(exclude_buildinfo=False):
     fout.write('version = "%s"\n' % version_info['version'])
     if not exclude_buildinfo:
         command = ['git', 'log', '--pretty=format:%H | %d','--decorate=full', '-1']
-        output = subprocess.check_output(command)
+        output = check_output(command)
         version, info = output.split('|')
         version = version.strip()
         info = info.strip('()').split(', ')
@@ -66,7 +76,7 @@ def create_version(exclude_buildinfo=False):
         fout.write('build_date = "%s"\n' % build_date)
         fout.write('build_host = "%s"\n' % socket.getfqdn())
         command = ['git', 'status', '--porcelain']
-        output = subprocess.check_output(command)
+        output = check_output(command)
         fout.write('build_changes = [%s]\n' % \
                 ', '.join(['"%s"' % line.strip() for line in output.splitlines()]))
     fout.close()

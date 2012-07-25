@@ -50,6 +50,28 @@ typedef struct
 
 
 static PyObject *
+sslex_set_ciphers(PyObject *self, PyObject *args)
+{
+    char *ciphers;
+    PyObject *Pret = NULL;
+    PySSLShadowObject *sslob;
+
+    if (!PyArg_ParseTuple(args, "Os:set_ciphers", &sslob, &ciphers))
+        return NULL;
+    if (strcmp(sslob->ob_type->tp_name, "ssl.SSLContext"))
+        RETURN_ERROR("expecting a SSLContext");
+    if (!SSL_set_cipher_list(sslob->ssl, ciphers))
+        RETURN_ERROR("SSL_set_cipher_list() failed");
+
+    Py_INCREF(Py_None);
+    Pret = Py_None;
+
+error:
+    return Pret;
+}
+
+ 
+static PyObject *
 sslex_get_channel_binding(PyObject *self, PyObject *args)
 {
     PyObject *Pcb = NULL;
@@ -126,6 +148,8 @@ error:
 
 static PyMethodDef sslex_methods[] =
 {
+    { "set_ciphers",
+            (PyCFunction) sslex_set_ciphers, METH_VARARGS },
     { "get_channel_binding",
             (PyCFunction) sslex_get_channel_binding, METH_VARARGS },
     { "set_dh_params",

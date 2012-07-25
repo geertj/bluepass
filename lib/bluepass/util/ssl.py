@@ -29,12 +29,15 @@ class SSLSocket(ssl.SSLSocket):
         self.dhparams = kwargs.pop('dhparams', '')
         self.dh_single_use = kwargs.pop('dh_single_use', False)
         self.server_side = kwargs.pop('server_side', False)
+        self.ciphers = kwargs.pop('ciphers', None)
         super(SSLSocket, self).__init__(*args, **kwargs)
 
     def do_handshake(self):
         """Set DH parameters prior to handshake."""
         if self.dhparams:
             _sslex.set_dh_params(self._sslobj, self.dhparams, self.dh_single_use)
+        if self.ciphers:
+            _sslex.set_ciphers(self._sslobj, self.ciphers)
         # Now make it a server socket again if we need to..
         if self.server_side:
             _sslex._set_accept_state(self._sslobj)
@@ -71,12 +74,9 @@ class HTTPSConnection(httplib.HTTPConnection):
                         si.get('type', socket.SOCK_STREAM), si.get('proto', 0))
             if self.timeout:
                 sock.settimeout(self.timeout)
-            if self.source_address:
-                sock.bind(self.source_address)
             sock.connect(si['addr'])
         else:
-            sock = socket.create_connection((self.host, self.port),
-                                            self.timeout, self.source_address)
+            sock = socket.create_connection((self.host, self.port))
         if self._tunnel_host:
             self.sock = sock
             self._tunnel()
