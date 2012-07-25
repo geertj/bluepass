@@ -18,9 +18,12 @@ def get_machine_info():
         if label == 'processor':
             cores += 1
     fin.close()
-    fin = file('/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq')
-    cpu_speed = int(fin.readline().strip()) / 1000
-    fin.close()
+    try:
+        fin = file('/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq')
+        cpu_speed = int(fin.readline().strip()) / 1000
+        fin.close()
+    except IOError:
+        cpu_speed = 0
     memory = 0
     fin = file('/proc/meminfo')
     for line in fin:
