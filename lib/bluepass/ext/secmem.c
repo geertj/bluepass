@@ -7,7 +7,6 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/mman.h>
-#include <sys/prctl.h>
 
 
 static PyObject *secmem_Error = NULL;
@@ -25,7 +24,8 @@ static PyObject *
 secmem_lock(PyObject *self, PyObject *args)
 {
     char *start, *end;
-    int pagesize, ret;
+    int ret;
+    long pagesize;
     PyStringObject *s;
     PyObject *Pret = NULL;
 
@@ -41,8 +41,7 @@ secmem_lock(PyObject *self, PyObject *args)
     end = (char *) s + s->ob_size - 1;
     end += (pagesize - (unsigned long) end % pagesize);
     ret = mlock(start, end-start);
-    ret = (ret == 0) ? end-start : 0;
-    Pret = PyInt_FromLong(ret);
+    Pret = PyInt_FromLong(!(ret < 0));
 
 error:
     return Pret;
@@ -52,7 +51,8 @@ static PyObject *
 secmem_unlock(PyObject *self, PyObject *args)
 {
     char *start, *end;
-    int pagesize, ret;
+    int ret;
+    long pagesize;
     PyStringObject *s;
     PyObject *Pret = NULL;
 
@@ -68,8 +68,7 @@ secmem_unlock(PyObject *self, PyObject *args)
     end = (char *) s + s->ob_size - 1;
     end += (pagesize - (unsigned long) end % pagesize);
     ret = munlock(start, end-start);
-    ret = (ret == 0) ? end-start : 0;
-    Pret = PyInt_FromLong(ret);
+    Pret = PyInt_FromLong(!(ret < 0));
 
 error:
     return Pret;
@@ -123,7 +122,9 @@ error:
     return Pret;
 }
 
-#if defined(__linux__) || defined(__APPLE__)
+#if defined(__linux__)
+
+#include <sys/prctl.h>
 
 static PyObject *
 secmem_disable_ptrace(PyObject *self, PyObject *args)
@@ -147,6 +148,8 @@ secmem_disable_ptrace(PyObject *self, PyObject *args)
 
     if (!PyArg_ParseTuple(args, ":disable_ptrace"))
         return NULL;
+    PyErr_WarnEx(PyExc_UserWarning, "don't know how to disable ptrace() "
+                 "on this platform", 1);
     Pret = PyBool_FromLong(0);
     return Pret;
 }
@@ -163,7 +166,7 @@ static PyMethodDef secmem_methods[] =
 };
 
 void
-initsecmem()
+initsecmem(void)
 {
     PyObject *Pdict, *Pmodule;
 

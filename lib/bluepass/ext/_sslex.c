@@ -112,7 +112,7 @@ sslex_set_dh_params(PyObject *self, PyObject *args)
 
     dh = d2i_DHparams(NULL, (const unsigned char **) &params, paramslen);
     CHECK_OPENSSL_ERROR(dh == NULL);
-    ret = SSL_set_tmp_dh(sslob->ssl, dh);
+    ret = (int) SSL_set_tmp_dh(sslob->ssl, dh);
     CHECK_OPENSSL_ERROR(ret != 1);
     
     if (single_use)

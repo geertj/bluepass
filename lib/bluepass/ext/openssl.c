@@ -690,7 +690,7 @@ openssl_random(PyObject *self, PyObject *args)
         buf2len = sizeof(unsigned int);
         MALLOC(buf2, buf2len);
         ptr = PyString_AS_STRING(alphabet);
-        nitems = PyString_GET_SIZE(alphabet);
+        nitems = (int) PyString_GET_SIZE(alphabet);
         for (i=0; i<count; i++) {
             ret = RAND_bytes((unsigned char *) buf2, buf2len);
             CHECK_OPENSSL_ERROR(ret != 1);
@@ -699,12 +699,12 @@ openssl_random(PyObject *self, PyObject *args)
         Presult = PyString_FromStringAndSize(buf, buflen);
         CHECK_PYTHON_ERROR(Presult == NULL);
     } else if (PyUnicode_Check(alphabet)) {
-        buflen = count * sizeof(Py_UNICODE);
+        buflen = count * (int) sizeof(Py_UNICODE);
         MALLOC(buf, buflen);
         buf2len = sizeof (unsigned int);
         MALLOC(buf2, buf2len);
         ptr = (char *) PyUnicode_AS_UNICODE(alphabet);
-        nitems = PyUnicode_GET_SIZE(alphabet);
+        nitems = (int) PyUnicode_GET_SIZE(alphabet);
         for (i=0; i<count; i++) {
             ret = RAND_bytes((unsigned char *) buf2, buf2len);
             CHECK_OPENSSL_ERROR(ret != 1);
@@ -722,12 +722,12 @@ openssl_random(PyObject *self, PyObject *args)
         MALLOC(buf, buflen);
         buf2len = sizeof (unsigned int);
         MALLOC(buf2, buf2len);
-        nitems = PySequence_Size(alphabet);
+        nitems = (int) PySequence_Size(alphabet);
         if (separator == NULL || separator == Py_None) {
             seplen = 0;
             sepptr = NULL;
         } else { 
-            seplen = PyString_GET_SIZE(separator);
+            seplen = (int) PyString_GET_SIZE(separator);
             sepptr = PyString_AS_STRING(separator);
         }
         for (i=0,offset=0; i<count; i++) {
@@ -738,7 +738,7 @@ openssl_random(PyObject *self, PyObject *args)
             if (!PyString_Check(item))
                 RETURN_ERROR("all items in the alphabet must be strings");
             ptr = PyString_AS_STRING(item);
-            size = PyString_GET_SIZE(item);
+            size = (int) PyString_GET_SIZE(item);
             while (offset + size + seplen > buflen)
                 REALLOC(buf, buflen);
             memcpy(buf+offset, ptr, size);
@@ -755,16 +755,16 @@ openssl_random(PyObject *self, PyObject *args)
         if (!(separator == NULL || separator == Py_None) &&
                     !PyUnicode_Check(separator))
             RETURN_ERROR("separator must be unicode");
-        buflen = count * sizeof (Py_UNICODE);
+        buflen = count * (int) sizeof (Py_UNICODE);
         MALLOC(buf, buflen);
         buf2len = sizeof (unsigned int);
         MALLOC(buf2, buf2len);
-        nitems = PySequence_Size(alphabet);
+        nitems = (int) PySequence_Size(alphabet);
         if (separator == NULL || separator == Py_None) {
             seplen = 0;
             sepptr = NULL;
         } else { 
-            seplen = PyUnicode_GET_DATA_SIZE(separator);
+            seplen = (int) PyUnicode_GET_DATA_SIZE(separator);
             sepptr = (char *) PyUnicode_AS_UNICODE(separator);
         }
         for (i=0,offset=0; i<count; i++) {
@@ -774,7 +774,7 @@ openssl_random(PyObject *self, PyObject *args)
             if (!PyUnicode_Check(item))
                 RETURN_ERROR("all items in the alphabet must be unicode");
             ptr = (char *) PyUnicode_AS_UNICODE(item);
-            size = PyUnicode_GET_DATA_SIZE(item);
+            size = (int) PyUnicode_GET_DATA_SIZE(item);
             while (offset + size + seplen > buflen)
                 REALLOC(buf, buflen);
             memcpy(buf+offset, ptr, size);
