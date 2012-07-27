@@ -5,7 +5,6 @@
 import os
 import socket
 import logging
-import threading
 
 from bluepass import platform
 from bluepass.factory import create, instance, deref, FactoryError
@@ -89,8 +88,6 @@ class Backend(object):
     def _start_backend(self):
         """Start up all backend components."""
         crypto = create(CryptoProvider)
-        thread = threading.Thread(target=crypto._measure_pbkdf2_speed)
-        thread.start()
         fname = os.path.join(self.datadir, 'bluepass.db')
         database = create(Database, fname)
         database.lock()

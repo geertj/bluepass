@@ -632,7 +632,9 @@ openssl_pbkdf2(PyObject *self, PyObject *args)
     unsigned char *salt, *out = NULL;
     int pwlen, slen, iter, keylen, ret;
     PyObject *Presult = NULL;
+#if OPENSSL_VERSION >= 0x10000000
     const EVP_MD *digest;
+#endif
 
     if (!PyArg_ParseTuple(args, "s#s#iis:pbkdf2", &password, &pwlen,
                           &salt, &slen, &iter, &keylen, &prf))
@@ -644,6 +646,8 @@ openssl_pbkdf2(PyObject *self, PyObject *args)
         RETURN_ERROR("iter must be > 0");
     if (strncmp(prf, "hmac-", 5))
         RETURN_ERROR("unsupported pseudo-random function: %s", prf);
+
+#if OPENSSL_VERSION >= 0x10000000
     if ((digest = EVP_get_digestbyname(prf+5)) == NULL)
         RETURN_ERROR("unknown hash function in: %s", prf);
 
@@ -652,6 +656,17 @@ openssl_pbkdf2(PyObject *self, PyObject *args)
     ret = PKCS5_PBKDF2_HMAC(password, pwlen, salt, slen, iter,
                             digest, keylen, out);
     Py_END_ALLOW_THREADS
+#else
+    if (strcmp(prf+5, "sha1"))
+        RETURN_ERROR("unknown hash function in: %s", prf);
+
+    MALLOC(out, keylen);
+    Py_BEGIN_ALLOW_THREADS
+    ret = PKCS5_PBKDF2_HMAC_SHA1(password, pwlen, salt, slen, iter,
+                                 keylen, out);
+    Py_END_ALLOW_THREADS
+#endif
+
     CHECK_OPENSSL_ERROR(ret != 1);
     Presult = PyString_FromStringAndSize((char *) out, keylen);
     CHECK_PYTHON_ERROR(Presult == NULL);

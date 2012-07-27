@@ -153,7 +153,6 @@ class TestCrypto(CryptoTest):
     def test_pbkdf2_speed(self):
         cp = self.provider
         speed = cp.pbkdf2_speed()
-        print 'PBKDF2 speed = %d' % speed
 
     def test_hkdf_vectors(self):
         cp = self.provider
@@ -185,7 +184,6 @@ class TestCrypto(CryptoTest):
         assert rnd.isdigit()
         rnd = cp.random(5, ['01', '23', '45', '67', '89'], '0')
         assert isinstance(rnd, str)
-        print rnd
         assert len(rnd) == 14
         assert rnd.isdigit()
         rnd = cp.random(5, [u'01', u'23', u'45', u'67', u'89'], u'0')

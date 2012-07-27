@@ -98,7 +98,7 @@ class Model(object):
             return False, 'Unkown algo "%s" for sign key' % u[6]
         if not base64.check(u[7]):
             return False, 'Invalid base64 for encinfo/IV for sign key' % u[7]
-        if u[8] != 'pbkdf2-hmac-sha256':
+        if u[8] not in ('pbkdf2-hmac-sha1', 'pbkdf2-hmac-sha256'):
             return False, 'Unknown encinfo/kdf "%s" for sign key' % u[8]
         if not base64.check(u[9]):
             return False, 'Invalid base64 for encinfo/salt for sign key' % u[9]
@@ -118,7 +118,7 @@ class Model(object):
             return False, 'Unkown algo "%s" for encrypt key' % u[18]
         if not base64.check(u[19]):
             return False, 'Invalid base64 for encinfo/IV for encrypt key' % u[19]
-        if u[20] != 'pbkdf2-hmac-sha256':
+        if u[20] not in ('pbkdf2-hmac-sha1', 'pbkdf2-hmac-sha256'):
             return False, 'Unknown encinfo/kdf "%s" for encrypt key' % u[20]
         if not base64.check(u[21]):
             return False, 'Invalid base64 for encinfo/salt for encrypt key' % u[21]
@@ -693,17 +693,19 @@ class Model(object):
         encinfo['algo'] = 'aes-cbc-pkcs7'
         iv = crypto.random(16)
         encinfo['iv'] = base64.encode(iv)
-        encinfo['kdf'] = 'pbkdf2-hmac-sha256'
+        prf = 'hmac-sha256' if self.crypto.pbkdf2_prf_available('hmac-sha256') \
+                    else 'hmac-sha1'
+        encinfo['kdf'] = 'pbkdf2-%s' % prf
         # Tune pbkdf2 so that it takes about 0.2 seconds (but always at
         # least 4096 iterations).
-        count = max(4096, int(0.2 * crypto.pbkdf2_speed()))
+        count = max(4096, int(0.2 * crypto.pbkdf2_speed(prf)))
         self.logger.debug('using %d iterations for PBKDF2', count)
         encinfo['count'] = count
         encinfo['length'] = 16
         salt = crypto.random(16)
         encinfo['salt'] = base64.encode(salt)
         symkey = crypto.pbkdf2(password, salt, encinfo['count'],
-                               encinfo['length'], prf='hmac-sha256')
+                               encinfo['length'], prf=prf)
         enckey = crypto.aes_encrypt(private, symkey, iv, mode='cbc-pkcs7')
         keyinfo['private'] = base64.encode(enckey)
         keyinfo['pwcheck'] = pwcheck = {}
@@ -724,6 +726,11 @@ class Model(object):
         # us to 1 concurrent thread.
         # Also make sure to import threading late so that monkey gets a chance
         # to patch the time module making Thread.join() cooperative.
+        #
+        # Only measure the PBKDF2 speed once, not once per thread
+        prf = 'hmac-sha256' if self.crypto.pbkdf2_prf_available('hmac-sha256') \
+                    else 'hmac-sha1'
+        dummy = self.crypto.pbkdf2_speed(prf)
         keys = {}
         keys_ready = SelfPipeEvent()
         if hasattr(platform, 'get_machine_info'):
@@ -945,12 +952,13 @@ class Model(object):
             pwcheck = keyinfo['pwcheck']
             # These are enforced by check_vault()
             assert encinfo['algo'] == 'aes-cbc-pkcs7'
-            assert encinfo['kdf'] == 'pbkdf2-hmac-sha256'
+            assert encinfo['kdf'] in ('pbkdf2-hmac-sha1', 'pbkdf2-hmac-sha256')
             assert pwcheck['algo'] == 'hmac-random-sha256'
             salt = base64.decode(encinfo['salt'])
             iv = base64.decode(encinfo['iv'])
+            prf = encinfo['kdf'][7:]
             symkey = crypto.pbkdf2(password, salt, encinfo['count'],
-                                   encinfo['length'], prf='hmac-sha256')
+                                   encinfo['length'], prf=prf)
             random = base64.decode(pwcheck['random'])
             verifier = base64.decode(pwcheck['verifier'])
             check = crypto.hmac(symkey, random, 'sha256')

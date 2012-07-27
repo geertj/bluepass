@@ -76,6 +76,7 @@ sslex_get_channel_binding(PyObject *self, PyObject *args)
 {
     PyObject *Pcb = NULL;
     PySSLShadowObject *sslob;
+    SSL3_STATE *s3;
 
     if (!PyArg_ParseTuple(args, "O:get_channel_binding", &sslob))
         return NULL;
@@ -84,12 +85,23 @@ sslex_get_channel_binding(PyObject *self, PyObject *args)
     if (sslob->ssl->s3 == NULL)
         RETURN_ERROR("cannot get channel binding for SSLv2");
 
+#if defined(__APPLE__) && defined(__LP64__)
+    /* FUDGE... When compiling the Python module against the OpenSSL
+     * headers provided in /usr/include/openssl, the generated machine
+     * code places the s3->tmp strucute 8 bytes ealier than it really is.
+     * No idea where this comes from. */
+    /* Might also be needed on 32-bit or PPC - NOT tested. */
+    s3 = (SSL3_STATE *) ((char *) sslob->ssl->s3 + 8);
+#else
+    s3 = sslob->ssl->s3;
+#endif
+
     if (SSL_session_reused(sslob->ssl) ^ !sslob->ssl->server)
-        Pcb = PyString_FromStringAndSize((char *) sslob->ssl->s3->tmp.finish_md,
-                    sslob->ssl->s3->tmp.finish_md_len);
+        Pcb = PyString_FromStringAndSize((char *) s3->tmp.finish_md,
+                    s3->tmp.finish_md_len);
     else
-        Pcb = PyString_FromStringAndSize((char *) sslob->ssl->s3->tmp.peer_finish_md,
-                    sslob->ssl->s3->tmp.peer_finish_md_len);
+        Pcb = PyString_FromStringAndSize((char *) s3->tmp.peer_finish_md,
+                    s3->tmp.peer_finish_md_len);
 
 error:
     return Pcb;

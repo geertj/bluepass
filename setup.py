@@ -115,6 +115,11 @@ class mybuild_ext(build_ext):
             self.define = [('TEST_BUILD', None)]
 
 
+extargs = {}
+if sys.platform == 'darwin':
+    # Silence warnings about our RETURN_ERROR macro
+    extargs['extra_compile_args'] = ['-Wno-format']
+
 os.chdir(buildroot())
 
 setup(
@@ -125,10 +130,11 @@ setup(
                 'bluepass.platform.linux', 'bluepass.platform.qt'],
     ext_modules = [
         Extension('bluepass.ext.openssl', ['lib/bluepass/ext/openssl.c'],
-                  libraries=['ssl', 'crypto']),
-        Extension('bluepass.ext.secmem', ['lib/bluepass/ext/secmem.c']),
+                  libraries=['ssl', 'crypto'], **extargs),
+        Extension('bluepass.ext.secmem', ['lib/bluepass/ext/secmem.c'],
+                  **extargs),
         Extension('bluepass.ext._sslex', ['lib/bluepass/ext/_sslex.c'],
-                  libraries=['ssl', 'crypto'])
+                  libraries=['ssl', 'crypto'], **extargs)
     ],
     install_requires = ['setuptools'],
     entry_points = { 'console_scripts': [ 'bluepass = bluepass.main:main' ] },

@@ -44,7 +44,7 @@ class CryptoProvider(object):
     point this could use a native platform crypto provider.
     """
 
-    _pbkdf2_speed = None
+    _pbkdf2_speed = {}
 
     def __init__(self, engine=None):
         """Create a new crypto provider."""
@@ -120,35 +120,46 @@ class CryptoProvider(object):
         """AES decrypt a string `s' with key `key'."""
         return self.engine.aes_decrypt(s, key, iv, mode)
 
-    def pbkdf2(self, password, salt, count, length, prf='hmac-sha256'):
+    def pbkdf2(self, password, salt, count, length, prf='hmac-sha1'):
         """PBKDF2 key derivation function from PKCS#5."""
         return self.engine.pbkdf2(password, salt, count, length, prf)
 
-    def _measure_pbkdf2_speed(self):
+    def _measure_pbkdf2_speed(self, prf='hmac-sha1'):
         """Measure the speed of PBKDF2 on this system."""
         salt = password = '0123456789abcdef'
         length = 1; count = 1000
         logger = logging.getLogger(__name__)
         logger.debug('starting PBKDF2 speed measurement')
+        start = time.time()
         while True:
-            start = time.time()
-            self.pbkdf2(password, salt, count, length)
-            end = time.time()
-            if end - start > 0.5:
+            startrun = time.time()
+            self.pbkdf2(password, salt, count, length, prf)
+            endrun = time.time()
+            if endrun - startrun > 0.4:
                 break
             count = int(count * math.e)
-        speed = int(count / (end - start))
+        end = time.time()
+        speed = int(count / (endrun - startrun))
         logger.debug('PBKDF2 speed is %d iterations / second', speed)
+        logger.debug('PBKDF2 speed measurement took %.2fs', (end - start))
         # Store the speed in the class so that it can be re-used by
         # other instances.
-        type(self)._pbkdf2_speed = speed
+        self._pbkdf2_speed[prf] = speed
 
-    def pbkdf2_speed(self, prf='hmac-sha256'):
+    def pbkdf2_speed(self, prf='hmac-sha1'):
         """Return the speed in rounds/second for generating a key
         with PBKDF2 of up to the hash length size of `prf`."""
-        if self._pbkdf2_speed is None:
-            self._measure_pbkdf2_speed()
-        return self._pbkdf2_speed
+        if prf not in self._pbkdf2_speed:
+            self._measure_pbkdf2_speed(prf)
+        return self._pbkdf2_speed[prf]
+
+    def pbkdf2_prf_available(self, prf):
+        """Test if a given PRF is available for PBKDF2."""
+        try:
+            dummy = self.pbkdf2('test', 'test', 1, 1, prf)
+        except CryptoError:
+            return False
+        return True
 
     def random(self, count, alphabet=None, separator=None):
         """Create a random string.
