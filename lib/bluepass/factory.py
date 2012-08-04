@@ -81,6 +81,7 @@ def create(cls, *args, **kwargs):
             logger.info('Using the Freedesktop secrets service as the keyring')
             return singleton(SecretsKeyring, connection)
         else:
+            logger.error('No keyring available')
             return None
     elif issubclass(cls, ZeroconfLocationSource):
         if os.environ.get('DBUS_SESSION_BUS_ADDRESS'):
@@ -90,6 +91,7 @@ def create(cls, *args, **kwargs):
             logger.info('Using Avahi as the Zeroconf provider')
             return singleton(AvahiLocationSource, connection)
         else:
+            logger.error('No zeroconf provider available')
             return None
     else:
         try:

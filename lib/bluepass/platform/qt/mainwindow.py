@@ -75,18 +75,13 @@ class SearchEditor(QLineEdit):
 
 class MenuButton(QPushButton):
 
-    stylesheet = """
-        MenuButton::menu-indicator { width: 0; }
-    """
-
     def __init__(self, parent=None):
         super(MenuButton, self).__init__(parent)
         self.setObjectName('menu')
-        self.setIcon(QIcon(QPixmap(iconpath('menu.png'))))
+        self.setIcon(QIcon(QPixmap(iconpath('bluepass.png'))))
         self.setFocusPolicy(Qt.TabFocus)
         self.setFlat(True)
         self.buildMenu()
-        self.setStyleSheet(self.stylesheet)
 
     def buildMenu(self):
         menu = QMenu(self)
@@ -241,6 +236,10 @@ class MainWindow(QWidget):
 
     stylesheet = """
         QStatusBar { border: 0; }
+        SearchEditor { height: 22px; }
+        MenuButton { height: 22px; }
+        MenuButton::menu-indicator { width: 0; }
+        QLineEdit { height: 22px; }
     """
 
     def __init__(self):
