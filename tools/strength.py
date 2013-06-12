@@ -1,7 +1,11 @@
 #!/usr/bin/env python
 #
-# This file is part of Bluepass. Bluepass is Copyright (c) 2012
-# Geert Jansen. All rights are reserved.
+# This file is part of Bluepass. Bluepass is Copyright (c) 2012-2013
+# Geert Jansen.
+#
+# Bluepass is free software available under the GNU General Public License,
+# version 3. See the file LICENSE distributed with this file for the exact
+# licensing terms.
 #
 # This script calculates the strength of the Diceware(r) passphrases we
 # generate under our PBKDF2 key derivation algorithm for various adversaries.

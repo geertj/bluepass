@@ -1,6 +1,10 @@
 #
-# This file is part of Bluepass. Bluepass is Copyright (c) 2012
-# Geert Jansen. All rights are reserved.
+# This file is part of Bluepass. Bluepass is Copyright (c) 2012-2013
+# Geert Jansen.
+#
+# Bluepass is free software available under the GNU General Public License,
+# version 3. See the file LICENSE distributed with this file for the exact
+# licensing terms.
 
 from PySide.QtCore import QPoint, Qt, Slot, Signal
 from PySide.QtGui import (QLabel, QLineEdit, QIcon, QPixmap, QPushButton,
@@ -321,8 +325,9 @@ class MainWindow(QWidget):
         backend = QApplication.instance().backend()
         version_info = backend.get_version_info()
         text = '<p><b>Bluepass password manager, version %s</b></p>' \
-               '<p>Bluepass is copyright (c) 2012 Geert Jansen. ' \
-               'All rights reserved.  For more information, see ' \
+               '<p>Bluepass is copyright (c) 2012-2013 Geert Jansen. ' \
+               'Bluepass is free software available under the GNU General ' \
+               'Public License, version 3. For more  information, see ' \
                '<a href="http://bluepass.org/">http://bluepass.org/</a>.</p>' \
                % version_info['version']
         QMessageBox.about(self, 'Bluepass', text)

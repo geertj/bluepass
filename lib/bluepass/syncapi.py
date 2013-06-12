@@ -1,6 +1,10 @@
 #
-# This file is part of Bluepass. Bluepass is Copyright (c) 2012
-# Geert Jansen. All rights are reserved.
+# This file is part of Bluepass. Bluepass is Copyright (c) 2012-2013
+# Geert Jansen.
+#
+# Bluepass is free software available under the GNU General Public License,
+# version 3. See the file LICENSE distributed with this file for the exact
+# licensing terms.
 
 import re
 import sys
@@ -98,7 +102,10 @@ def parse_vector(vector):
 
 def dump_vector(vector):
     """Dump an up-to-date vector."""
-    return ','.join(['%s:%s' % (uuid, seqno) for (uuid, seqno) in vector])
+    vec = ','.join(['%s:%s' % (uuid, seqno) for (uuid, seqno) in vector])
+    if isinstance(vec, unicode):
+        vec = vec.encode('iso-8859-1')  # XXX: investiage
+    return vec
 
 
 class SyncAPIClient(object):

@@ -1,6 +1,10 @@
 /*
- * This file is part of MPM. MPM is Copyright (c) 2012 by Geert Jansen. All
- * rights are reserved.
+ * This file is part of Bluepass. Bluepass is Copyright (c) 2012-2013
+ * Geert Jansen.
+ *
+ * Bluepass is free software available under the GNU General Public License,
+ * version 3. See the file LICENSE distributed with this file for the exact
+ * licensing terms.
  *
  * This is a Python C extension module that adds a few extra functions for
  * to the Python _ssl module.
@@ -88,8 +92,8 @@ sslex_get_channel_binding(PyObject *self, PyObject *args)
 #if defined(__APPLE__) && defined(__LP64__)
     /* FUDGE... When compiling the Python module against the OpenSSL
      * headers provided in /usr/include/openssl, the generated machine
-     * code places the s3->tmp strucute 8 bytes ealier than it really is.
-     * No idea where this comes from. */
+     * code places the s3->tmp structure 8 bytes ealier than it really is.
+     * No idea where this comes from.... */
     /* Might also be needed on 32-bit or PPC - NOT tested. */
     s3 = (SSL3_STATE *) ((char *) sslob->ssl->s3 + 8);
 #else

@@ -1,6 +1,10 @@
 #
-# This file is part of Bluepass. Bluepass is Copyright (c) 2012
-# Geert Jansen. All rights are reserved.
+# This file is part of Bluepass. Bluepass is Copyright (c) 2012-2013
+# Geert Jansen.
+#
+# Bluepass is free software available under the GNU General Public License,
+# version 3. See the file LICENSE distributed with this file for the exact
+# licensing terms.
 
 import time
 import gevent
@@ -60,11 +64,11 @@ class TestLocator(UnitTest):
             assert 'family' in addr
             assert isinstance(addr['family'], int)
             assert addr['family'] in (socket.AF_INET, socket.AF_INET6)
-            assert 'address' in addr
-            assert isinstance(addr['address'], (str, unicode))
-            assert 'port' in addr
-            assert isinstance(addr['port'], int)
-            assert addr['port'] == address[1]
+            assert 'addr' in addr
+            assert isinstance(addr['addr'], tuple)
+            assert isinstance(addr['addr'][0], (str, unicode))
+            assert isinstance(addr['addr'][1], int)
+            assert addr['addr'][1] == address[1]
         locator.unregister(node)
         gevent.sleep(5)
         result = locator.get_neighbors()

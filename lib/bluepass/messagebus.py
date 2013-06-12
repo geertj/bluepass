@@ -1,6 +1,10 @@
 #
-# This file is part of Bluepass. Bluepass is Copyright (c) 2012
-# Geert Jansen. All rights are reserved.
+# This file is part of Bluepass. Bluepass is Copyright (c) 2012-2013
+# Geert Jansen.
+#
+# Bluepass is free software available under the GNU General Public License,
+# version 3. See the file LICENSE distributed with this file for the exact
+# licensing terms.
 
 import sys
 import socket
@@ -448,8 +452,7 @@ class GEventLoop(object):
         timer.stop()
 
     def create_callback(self, callback, *args):
-        event = get_hub().loop.callback()
-        event.start(callback, *args)
+        get_hub().loop.run_callback(callback, *args)
 
 
 class MessageBusConnection(MessageBusConnectionBase):

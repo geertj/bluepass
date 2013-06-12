@@ -1,6 +1,10 @@
 #
-# This file is part of Bluepass. Bluepass is Copyright (c) 2012
-# Geert Jansen. All rights are reserved.
+# This file is part of Bluepass. Bluepass is Copyright (c) 2012-2013
+# Geert Jansen.
+#
+# Bluepass is free software available under the GNU General Public License,
+# version 3. See the file LICENSE distributed with this file for the exact
+# licensing terms.
 
 import time
 import math
@@ -720,12 +724,12 @@ class Model(object):
     def _create_vault_keys(self, password):
         """Create all 3 vault keys (sign, encrypt and auth)."""
         # Key generation is CPU intensive and would block gevent. We therefore
-        # generate the keys in a separate thread. If we have >= 2 cores we run
-        # them in two parallel threads as the C exension module for openssl
-        # enables threads when generating keys and so the GIL is not limiting
-        # us to 1 concurrent thread.
-        # Also make sure to import threading late so that monkey gets a chance
-        # to patch the time module making Thread.join() cooperative.
+        # generate the keys in a separate thread. If we have more than 1 core
+        # we generate the keys in two parallel threads as the C exension module
+        # for openssl enables threads when generating keys and so the GIL is
+        # not limiting us to 1 concurrent thread. Also make sure to import
+        # threading late so that monkey gets a chance to patch the time module
+        # making Thread.join() cooperative.
         #
         # Only measure the PBKDF2 speed once, not once per thread
         prf = 'hmac-sha256' if self.crypto.pbkdf2_prf_available('hmac-sha256') \
