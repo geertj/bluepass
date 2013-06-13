@@ -1,0 +1,3 @@
+python-tdbus
+greenlet==0.4.1
+-e git://github.com/surfly/gevent.git@1.0rc2#egg=gevent

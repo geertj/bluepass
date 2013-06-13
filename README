@@ -1,1 +1,9 @@
 Welcome to Bluepass!!
+
+== Installation ==
+
+Ubuntu based systems::
+
+    # apt-get install python-dev cython python-pyside libdbus-1-dev
+    # pip install -r requirements.txt
+    # python setup.py install
