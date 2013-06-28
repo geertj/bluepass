@@ -95,6 +95,10 @@ class EditPasswordDialog(QDialog):
     This dialog allows the user to edit a password.
     """
 
+    stylesheet = """
+        QLineEdit { background-color: white; }
+    """
+    
     def __init__(self, parent=None):
         super(EditPasswordDialog, self).__init__(parent)
         self.vault = None
@@ -103,6 +107,7 @@ class EditPasswordDialog(QDialog):
         self.groups = {}
         self.group_order = {}
         self.addWidgets()
+        self.setStyleSheet(self.stylesheet)
         backend = QApplication.instance().backend()
         backend.VersionsAdded.connect(self.updateGroups)
         self.resize(500, 350)

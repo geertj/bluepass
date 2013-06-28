@@ -244,7 +244,7 @@ class MainWindow(QWidget):
 
     stylesheet = """
         QStatusBar { border: 0; }
-        SearchEditor { height: 22px; }
+        SearchEditor { height: 22px; background-color: white; }
         MenuButton { height: 22px; }
         MenuButton::menu-indicator { width: 0; }
         QLineEdit { height: 22px; }
