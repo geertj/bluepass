@@ -134,7 +134,6 @@ class MenuButton(QPushButton):
 
     copyUsername = Signal()
     copyPassword = Signal()
-    addGroup = Signal()
 
     @Slot()
     def lockVault(self):
@@ -156,6 +155,11 @@ class MenuButton(QPushButton):
     def addPassword(self):
         pwview = QApplication.instance().mainWindow().passwordView()
         pwview.newPassword()
+
+    @Slot()
+    def addGroup(self):
+        pwview = QApplication.instance().mainWindow().passwordView()
+        pwview.newGroup()
 
     @Slot()
     def showVaultManager(self):

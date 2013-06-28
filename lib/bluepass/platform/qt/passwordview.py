@@ -20,7 +20,7 @@ from bluepass.ext import secmem
 from bluepass.crypto import CryptoProvider
 from bluepass.platform.qt.util import iconpath, SortedList
 from bluepass.platform.qt.messagebus import MessageBusError
-from bluepass.platform.qt.dialogs import EditPasswordDialog
+from bluepass.platform.qt.dialogs import EditPasswordDialog, AddGroupDialog
 
 
 def sortkey(version):
@@ -522,6 +522,7 @@ class PasswordView(QWidget):
         self.addWidgets()
         self.setStyleSheet(self.stylesheet)
         self.editpwdlg = EditPasswordDialog()
+        self.addgrpdlg = AddGroupDialog()
         backend = QApplication.instance().backend()
         backend.VaultAdded.connect(self.updateVault)
         backend.VaultRemoved.connect(self.updateVault)
@@ -679,7 +680,7 @@ class PasswordView(QWidget):
             vuuid = version['id']
             if version['_type'] == 'Password':
                 if mod == 'new':
-                    group = version.get('Group', 'All')
+                    group = version.get('group', 'All')
                     pos = current_order.find(group)
                     if pos == -1:
                         # No group. Don't bail on this just insert one.
@@ -713,7 +714,7 @@ class PasswordView(QWidget):
                     item.hide(); item.destroy()
                     if self.current_item[uuid] == vuuid:
                         self.current_item[uuid] = None
-            elif typ == 'Group':
+            elif version['_type'] == 'Group':
                 if mod == 'new':
                     pos = current_order.find(key)
                     if pos == -1:
@@ -967,4 +968,5 @@ class PasswordView(QWidget):
     @Slot()
     def newGroup(self):
         """Show a dialog to add a new group."""
-        self.addgrpdlg.newGroup()
+        vault = self.currentVault()
+        self.addgrpdlg.newGroup(vault)

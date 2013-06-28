@@ -24,16 +24,69 @@ class AddGroupDialog(QDialog):
     by calling out to the Backend.
     """
 
+    stylesheet = """
+        QLineEdit { background-color: white; }
+    """
+
     def __init__(self, parent=None):
         super(AddGroupDialog, self).__init__(parent)
+        self.vault = None
         self.setWindowTitle('Add Group')
         self.addWidgets()
+        self.setStyleSheet(self.stylesheet)
 
     def addWidgets(self):
-        pass
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+        grid = QGridLayout()
+        layout.addLayout(grid)
+        grid.setColumnMinimumWidth(1, 20)
+        grid.setColumnStretch(2, 100)
+        grid.setRowStretch(6, 100)
+        label = QLabel('Group Name', self)
+        grid.addWidget(label, 0, 0)
+        nameedt = QLineEdit(self)
+        nameedt.textChanged.connect(self.nameUpdated)
+        grid.addWidget(nameedt, 0, 2)
+        self.nameedt = nameedt
+        layout.addStretch(100)
+        hbox = QHBoxLayout()
+        layout.addLayout(hbox)
+        cancelbtn = QPushButton('Cancel')
+        cancelbtn.clicked.connect(self.hide)
+        hbox.addWidget(cancelbtn)
+        savebtn = QPushButton('Save')
+        savebtn.setDefault(True)
+        savebtn.setEnabled(False)
+        savebtn.clicked.connect(self.createGroup)
+        hbox.addWidget(savebtn)
+        self.savebtn = savebtn
+        hbox.addStretch(100)
 
+    @Slot(str)
+    def nameUpdated(self, name):
+        self.savebtn.setEnabled(bool(name))
+
+    @Slot(str)
+    def newGroup(self, vault):
+        self.vault = vault
+        self.nameedt.clear()
+        self.show()
+
+    @Slot()
     def createGroup(self):
-        pass
+        qapp = QApplication.instance()
+        backend = qapp.backend()
+        mainwindow = qapp.mainWindow()
+        name = self.nameedt.text()
+        version = { '_type': 'Group', 'name': name }
+        try:
+            backend.add_version(self.vault, version)
+        except MessageBusError as e:
+            mainwindow.showMessage('Could not add password: %s' % str(e))
+        else:
+            mainwindow.showMessage('Password added successfully')
+        self.hide()
 
 
 class EditPasswordDialog(QDialog):
@@ -57,23 +110,16 @@ class EditPasswordDialog(QDialog):
     def loadGroups(self, vault):
         backend = QApplication.instance().backend()
         versions = backend.get_versions(vault)
-        groups = self.groups[vault] = set()
-        groups.add('All')
-        for version in versions:
-            if version.get('_type') != 'Group' or not version.get('name'):
-                continue
-            groups.add(version['name'])
-        self.group_order[vault] = sorted(groups)
+        self.updateGroups(vault, versions)
 
     @Slot(str, list)
     def updateGroups(self, vault, versions):
         if vault not in self.groups:
-            return  # not yet tracking this one
+            self.groups[vault] = set()
         groups = self.groups[vault]
         for version in versions:
-            if version.get('_type') != 'Group' or not version.get('name'):
-                continue
-            groups.add(version['name'])
+            if version.get('_type') == 'Group' and version.get('name'):
+                groups.add(version['name'])
         self.group_order[vault] = sorted(groups)
 
     def setGroup(self, group):
@@ -93,6 +139,8 @@ class EditPasswordDialog(QDialog):
         label = QLabel('Group', self)
         grid.addWidget(label, 0, 0)
         combobox = QComboBox(self)
+        combobox.setEditable(True)
+        combobox.setInsertPolicy(QComboBox.InsertAtTop)
         grid.addWidget(combobox, 0, 2)
         self.combobox = combobox
         self.fields['group'] = (combobox.currentText, None)
@@ -174,11 +222,9 @@ class EditPasswordDialog(QDialog):
         self.combobox.clear()
         group = version.get('group', 'All')
         for name in self.group_order[vault]:
-            self.combobox.addItem(group)
-            if name != group:
-                continue
-            pos = self.combobox.count()-1
-            self.combobox.setCurrentIndex(pos)
+            self.combobox.addItem(name)
+            if name == group:
+                self.combobox.setCurrentIndex(self.combobox.count()-1)
         for field in self.fields:
             getvalue, setvalue = self.fields[field]
             if setvalue:
