@@ -41,7 +41,7 @@ class SocketAPIHandler(MessageBusHandler):
 
     def _event_callback(self, event, *args):
         # Forward the event over the message bus.
-        instance(MessageBusServer).send_signal('client-*', event, *args)
+        instance(MessageBusServer).send_signal(None, event, *args)
 
     # Version
 

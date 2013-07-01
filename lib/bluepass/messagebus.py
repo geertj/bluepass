@@ -68,8 +68,9 @@ class MessageBusConnectionBase(object):
             self.name = self.server.name
         self.peer_name = str(socket.getpeername())
         self.next_serial = 0
-        self.authenticated = False
-        self.peer_authenticated = False
+        # XXX: Authentiction disabled for now!!
+        self.authenticated = True
+        self.peer_authenticated = True
         self.closed = False
         self.tracefile = None
         self.callbacks = []
@@ -285,6 +286,7 @@ class MessageBusConnectionBase(object):
 
     def authenticate(self):
         """Send an authentication message to our peer."""
+        raise AssertionError('authenticate() should not be called anymore')
         logger = self.logger
         assert not self.authenticated
         message = { 'type': 'authenticate',

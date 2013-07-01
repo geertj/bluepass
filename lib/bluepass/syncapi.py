@@ -518,7 +518,7 @@ class SyncAPIApplication(WSGIApplication):
             bus = instance(MessageBusServer)
             kxid = self.crypto.random(16).encode('hex')
             pin = '%06d' % (self.crypto.randint(bits=31) % 1000000)
-            approved = bus.call_method('client-*', 'get_pairing_approval',
+            approved = bus.call_method(None, 'get_pairing_approval',
                                        name, uuid, pin, kxid, timeout=60)
             if not approved:
                 raise HTTPReturn('403 Approval Denied')
@@ -544,7 +544,7 @@ class SyncAPIApplication(WSGIApplication):
             if check != signature:
                 raise HTTPReturn('403 Invalid PIN')
             bus = instance(MessageBusServer)
-            bus.send_signal('client-*', 'PairingComplete', kxid)
+            bus.send_signal(None, 'PairingComplete', kxid)
             # Prove to the other side we also know the PIN
             signature = self.crypto.hmac(adjust_pin(pin, -1), cb, 'sha1')
             signature = base64.encode(signature)
