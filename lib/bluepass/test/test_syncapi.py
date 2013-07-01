@@ -51,7 +51,6 @@ class TestSyncAPI(UnitTest):
         mbhandler = MBTestHandler()
         mbclient = MessageBusConnection(csock, 'S3cret', mbhandler)
         #mbclient.set_trace('/tmp/client.txt')
-        mbclient.authenticate()  # XXX
         # Start the syncapi
         lsock = socket.socket()
         lsock.bind(('localhost', 0))

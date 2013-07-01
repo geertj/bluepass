@@ -97,9 +97,10 @@ class QtMessageBusConnection(MessageBusConnectionBase):
             if replies:
                 break
         reply = replies[0]
-        if reply['type'] == 'error':
-            raise MessageBusError(reply['value']['error_name'], reply['value']['error_detail'])
-        return reply['value']
+        if 'error' in reply:
+            raise MessageBusError(reply['error']['code'],
+                                  reply['error'].get('data'))
+        return reply.get('result')
 
 
 class QtMessageBusHandler(MessageBusHandler):
@@ -112,7 +113,7 @@ class QtMessageBusHandler(MessageBusHandler):
         self.catchall_signal_handler = handler
 
     def _dispatch_signal(self, message, connection):
-        name = message.get('name')
+        name = message.get('method')
         if name in self.signal_handlers:
             super(QtMessageBusHandler, self). \
                         _dispatch_signal(message, connection)

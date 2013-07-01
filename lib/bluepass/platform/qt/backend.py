@@ -88,11 +88,11 @@ class BackendProxy(QObject):
         
         The signal is passed on as a Qt Signal().
         """
-        name = message['name']
+        name = message['method']
         print 'SIGNAL', name
         signal = getattr(self, name, None)
         if signal and isinstance(signal, Signal):
-            signal.emit(*message.get('args', ()))
+            signal.emit(*message.get('params', ()))
 
     VaultAdded = Signal(dict)
     VaultRemoved = Signal(dict)
