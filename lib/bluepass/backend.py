@@ -55,6 +55,8 @@ class Backend(object):
         """
         parser.add_argument('-l', '--listen',
                             help='The JSON-RPC listen address')
+        parser.add_argument('--daemon', action='store_true',
+                            help='Do not quit after last connection exited')
         parser.add_argument('--trace', action='store_true',
                             help='Trace JSON-RPC messages [in backend.trace]')
 
@@ -113,10 +115,11 @@ class Backend(object):
         if self.options.get('trace'):
             fname = os.path.join(self.data_dir, 'backend.trace')
             messagebus.set_trace(fname)
-        def messagebus_event(event, *args):
-            if event == 'LastConnectionClosed':
-                self.stop()
-        messagebus.add_callback(messagebus_event)
+        if not self.options.get('daemon'):
+            def messagebus_event(event, *args):
+                if event == 'LastConnectionClosed':
+                    self.stop()
+            messagebus.add_callback(messagebus_event)
         messagebus.start()
 
         self.logger.debug('installing signal handlers')
