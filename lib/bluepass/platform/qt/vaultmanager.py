@@ -357,6 +357,7 @@ class CreateVault(Page):
         super(CreateVault, self).__init__(vaultmgr)
         self.name = name
         self.method = 0
+        self.uuid = None
         self.logger = logging.getLogger(__name__)
         self.addWidgets()
         self.setStyleSheet(self.stylesheet)
