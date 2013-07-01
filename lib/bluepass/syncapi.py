@@ -666,6 +666,7 @@ class SyncAPIServer(WSGIServer):
     handler_class = SyncAPIHandler
 
     def __init__(self, listener, application, **ssl_args):
+        listener.setblocking(0)
         ssl_args.setdefault('dhparams', dhparams['skip2048'])
         ssl_args.setdefault('ciphers', 'ADH+AES')
         super(SyncAPIServer, self).__init__(listener, application, spawn=10,

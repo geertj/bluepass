@@ -10,6 +10,7 @@ import socket
 import logging
 
 from tdbus import DBusHandler, DBusError, signal_handler
+from tdbus import GEventDBusConnection, DBUS_BUS_SYSTEM
 from bluepass.locator import ZeroconfLocationSource, LocationError
 
 # We do not import "avahi" because it depends on python-dbus which is
@@ -122,10 +123,12 @@ class AvahiLocationSource(ZeroconfLocationSource):
        requests.
     """
 
-    def __init__(self, connection):
-        """Constructor. You need to pass in a tdbus connection."""
+    name = 'avahi-zeroconf'
+
+    def __init__(self):
+        """Constructor."""
         super(AvahiLocationSource, self).__init__()
-        self.connection = connection
+        self.connection = GEventDBusConnection(DBUS_BUS_SYSTEM)
         handler = AvahiHandler(self._avahi_event)
         self.connection.add_handler(handler)
         self.logger = logging.getLogger(__name__)

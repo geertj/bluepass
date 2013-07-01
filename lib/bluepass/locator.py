@@ -17,6 +17,8 @@ class LocationError(Error):
 class LocationSource(object):
     """A location source."""
 
+    name = None
+
     def isavailable(self):
         raise NotImplementedError
 

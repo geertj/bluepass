@@ -63,10 +63,10 @@ class MessageBusConnectionBase(object):
         self.handler = handler
         self.server = server
         if self.server is None:
-            self.name = '%s:%d' % socket.getsockname()
+            self.name = str(socket.getsockname())
         else:
             self.name = self.server.name
-        self.peer_name = '%s:%d' % socket.getpeername()
+        self.peer_name = str(socket.getpeername())
         self.next_serial = 0
         self.authenticated = False
         self.peer_authenticated = False
@@ -74,7 +74,7 @@ class MessageBusConnectionBase(object):
         self.tracefile = None
         self.callbacks = []
         logger = logging.getLogger('bluepass.messagebus')
-        context = 'connection %s/%s' % (self.name, self.peer_name)
+        context = 'connection %s:%s' % (self.name, self.peer_name)
         self.logger = logging.ContextLogger(logger, context)
         self.crypto = CryptoProvider()
         self.loop = self.Loop()

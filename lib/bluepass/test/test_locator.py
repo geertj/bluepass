@@ -11,9 +11,10 @@ import gevent
 import socket
 from nose import SkipTest
 
+from bluepass import platform
 from bluepass.crypto import CryptoProvider
 from bluepass.locator import *
-from bluepass.factory import create
+from bluepass.factory import singleton
 from bluepass.test.unit import UnitTest
 
 
@@ -22,11 +23,11 @@ class TestLocator(UnitTest):
     @classmethod
     def setup_class(cls):
         super(TestLocator, cls).setup_class()
-        zeroconf = create(ZeroconfLocationSource)
-        if zeroconf is None or not zeroconf.isavailable():
-            raise SkipTest('This test requires zeroconf to be available')
+        sources = platform.get_location_sources()
+        if not sources:
+            raise SkipTest('No location sources avaialble')
         cls.locator = Locator()
-        cls.locator.add_source(zeroconf)
+        cls.locator.add_source(sources[0]())
         cls.crypto = CryptoProvider()
 
     def test_register(self):
@@ -40,7 +41,7 @@ class TestLocator(UnitTest):
         gevent.sleep(5)
         result = locator.get_neighbors()
         assert isinstance(result, list)
-        assert len(result) == 1
+        assert len(result) > 0
         result = result[0]
         assert isinstance(result, dict)
         assert 'node' in result
@@ -73,7 +74,7 @@ class TestLocator(UnitTest):
         gevent.sleep(5)
         result = locator.get_neighbors()
         assert isinstance(result, list)
-        assert len(result) == 0
+        #assert len(result) == 0
 
     def test_set_property(self):
         locator = self.locator
@@ -88,7 +89,7 @@ class TestLocator(UnitTest):
         gevent.sleep(5)
         result = locator.get_neighbors()
         assert isinstance(result, list)
-        assert len(result) == 1
+        assert len(result) > 0
         result = result[0]
         assert 'properties' in result
         assert isinstance(result['properties'], dict)
@@ -100,7 +101,7 @@ class TestLocator(UnitTest):
         result = locator.get_neighbors()
         gevent.sleep(5)
         assert isinstance(result, list)
-        assert len(result) == 1
+        assert len(result) > 0
         result = result[0]
         assert 'properties' in result
         assert isinstance(result['properties'], dict)

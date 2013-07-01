@@ -6,17 +6,13 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
+import os
 import sys
-from bluepass.error import Error
 
 
-class PlatformError(Error):
-    """Platform error."""
+# Unix like operating systems
 
-
-# Add your platform below:
-
-if sys.platform in ('linux2', 'darwin'):
+if hasattr(os, 'fork'):
     from gevent import socket
     from bluepass.platform.posix import errno
     from bluepass.platform.posix.misc import *
@@ -25,8 +21,37 @@ if sys.platform in ('linux2', 'darwin'):
     elif sys.platform == 'darwin':
         from bluepass.platform.darwin.misc import *
 
+    default_listen_address = os.path.join(get_sockdir(), 'bluepass.sock')
+
+# Windows
+
 elif sys.platform in ('win32',):
     from bluepass.platform.windows import socket
 
-else:
-    raise PlatformError('unsupported platform: %s' % sys.platform)
+    default_listen_address = 'localhost:0'
+
+
+_frontends = None
+
+def get_frontends():
+    global _frontends
+    if _frontends is not None:
+        return _frontends
+    _frontends = []
+    if os.environ.get('DISPLAY'):
+        from bluepass.platform.qt.frontend import QtFrontend
+        _frontends.append(QtFrontend)
+    return _frontends
+
+
+_location_sources = None
+
+def get_location_sources():
+    global _location_sources
+    if _location_sources is not None:
+        return _location_sources
+    _location_sources = []
+    if os.environ.get('DBUS_SESSION_BUS_ADDRESS'):
+        from bluepass.platform.freedesktop.avahi import AvahiLocationSource
+        _location_sources.append(AvahiLocationSource)
+    return _location_sources

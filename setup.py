@@ -126,7 +126,9 @@ def main():
         package_data = {'bluepass': ['data/*.asc'],
                         'bluepass.platform.qt': ['icons/*.png']},
         install_requires = ['greenlet>=0.4.0'],
-        entry_points = { 'console_scripts': [ 'bluepass = bluepass.main:main' ] },
+        entry_points = {'console_scripts':
+                            ['bluepass = bluepass.main:frontend',
+                             'bluepass-backend = bluepass.main:backend'] },
         test_suite = 'nose.collector',
         **version_info
     )

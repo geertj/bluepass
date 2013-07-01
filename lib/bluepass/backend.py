@@ -7,11 +7,17 @@
 # licensing terms.
 
 import os
-import socket
+import sys
+import stat
+import signal
 import logging
 
+from gevent import monkey
+from gevent.hub import get_hub
+from gevent.event import Event
+
 from bluepass import platform
-from bluepass.factory import create, instance, deref, FactoryError
+from bluepass.factory import singleton
 from bluepass.crypto import CryptoProvider
 from bluepass.database import Database
 from bluepass.model import Model
@@ -21,130 +27,186 @@ from bluepass.messagebus import MessageBusServer
 from bluepass.socketapi import SocketAPIHandler
 from bluepass.syncapi import SyncAPIApplication, SyncAPIServer, SyncAPIPublisher
 from bluepass.syncer import Syncer
-
-
-# The two functions below are the only entry points that the frontend
-# needs into the backend.
-
-# Available options:
-#  debug: True|False
-#  trace: True|False
-#  log_stdout: True|False
-#  datadir: string
-#  syncport: int
- 
-def start_backend(timeout, options=None):
-    """Start the backend. Returns a tuple (status, detail).  If status == True,
-    the backend was started, and detail is the tuple (ipaddr, port, authtok).
-    If status == False, the backend did not start up correctly, and detail is
-    a tuple (error_name, error_message).
-    """
-    try:
-        backend = instance(Backend)
-    except FactoryError:
-        pass
-    else:
-        detail = ('Exists', 'Backend already running')
-        return (False, detail)
-    backend = create(Backend, options)
-    status = backend.start(timeout)
-    if status:
-        detail = (backend.ipaddr, backend.port, backend.authtok)
-    else:
-        detail = (backend.error_name, backend.error_message,
-                  backend.error_detail)
-    return (status, detail)
-
-def stop_backend(timeout):
-    """Stop the backend. Returns True if the backend was stopped
-    succesfully within the timeout, or False otherwise."""
-    backend = instance(Backend)
-    status = backend.stop(timeout)
-    deref(Backend)
-    return status
+from bluepass.util import misc as util
 
 
 class Backend(object):
-    """The Bluepass backend. This is an active component that runs as a
-    separate process (or thread on Windows). It communicates with the frontend
-    via a socket (the message bus)."""
+    """The Bluepass backend."""
 
-    def __init__(self, options=None):
-        """Constructor."""
-        self.options = options or {}
-        self.datadir = options.get('datadir')
-        if self.datadir is None:
-            self.datadir = platform.get_appdir('bluepass')
-        sock = socket.socket()
-        sock.bind(('localhost', 0))
-        sock.listen(2)
-        sock.setblocking(0)
-        self.listener = sock
-        self.ipaddr, self.port = sock.getsockname()
-        crypto = CryptoProvider()
-        self.authtok = crypto.random(16).encode('hex')
-        if options.get('trace'):
-            self.tracefile = os.path.join(self.datadir, 'backend.trace')
-        else:
-            self.tracefile = None
+    def __init__(self, options):
+        """The *options* argument must be the parsed command-line arguments."""
+        self.options = options
+        self.data_dir = options.get('data_dir')
+        if self.data_dir is None:
+            self.data_dir = platform.get_appdir('bluepass')
+        self.auth_token = os.environ.get('BLUEPASS_AUTH_TOKEN')
+        listen = options.get('listen')
+        if listen is None:
+            listen = platform.default_listen_address
+        self.listen_address = util.parse_address(listen)
         self.logger = logging.getLogger('bluepass.backend')
+        self._stop_event = Event()
 
-    def _start_backend(self):
-        """Start up all backend components."""
-        crypto = create(CryptoProvider)
-        fname = os.path.join(self.datadir, 'bluepass.db')
-        database = create(Database, fname)
+    @classmethod
+    def add_args(self, parser):
+        """Add command-line arguments to *parser*.
+
+        The *parser* must be an :py:class:`argparse.ArgumentParser` instance.
+        """
+        parser.add_argument('-l', '--listen',
+                            help='The JSON-RPC listen address')
+        parser.add_argument('--trace', action='store_true',
+                            help='Trace JSON-RPC messages [in backend.trace]')
+
+    def run(self):
+        """Initialize the backend and run its main loop."""
+        self.logger.debug('initializing backend components')
+
+        self.logger.debug('initializing cryto provider')
+        crypto = singleton(CryptoProvider)
+        pwgen = singleton(PasswordGenerator)
+
+        self.logger.debug('initializing database')
+        fname = os.path.join(self.data_dir, 'bluepass.db')
+        database = singleton(Database, fname)
         database.lock()
-        model = create(Model, database)
-        locator = create(Locator)
-        zeroconf = create(ZeroconfLocationSource)
-        if zeroconf:
-            locator.add_source(zeroconf)
-        passwords = create(PasswordGenerator)
-        listener = socket.socket()
-        listener.bind(('0.0.0.0', 0))
-        listener.listen(2)
-        listener.setblocking(0)
-        app = create(SyncAPIApplication)
-        syncapi = create(SyncAPIServer, listener, app)
+
+        self.logger.debug('initializing model')
+        model = singleton(Model, database)
+
+        self.logger.debug('initializing locator')
+        locator = singleton(Locator)
+        for ls in platform.get_location_sources():
+            self.logger.debug('adding location source: {}'.format(ls.name))
+            locator.add_source(ls())
+
+        self.logger.debug('initializing sync API')
+        listener = util.create_listener(('0.0.0.0', 0))
+        listener.setblocking(False)
+        app = singleton(SyncAPIApplication)
+        syncapi = singleton(SyncAPIServer, listener, app)
         syncapi.start()
-        publisher = create(SyncAPIPublisher, syncapi)
+
+        self.logger.debug('initializing sync API publisher')
+        publisher = singleton(SyncAPIPublisher, syncapi)
         publisher.start()
+
         # The syncer is started at +10 seconds so that the locator will have
         # hopefully located all neighbors by then and we can do a once-off
         # sync at startup. This is just a heuristic for optimization, the
         # correctness of our sync algorithm does not depend on this.
-        syncer = create(Syncer)
+        self.logger.debug('initializing background sync worker')
+        syncer = singleton(Syncer)
         syncer.start_later(10)
-        handler = create(SocketAPIHandler)
-        messagebus = create(MessageBusServer, self.listener, self.authtok, handler)
-        messagebus.set_trace(self.tracefile)
+
+        self.logger.debug('initializing control API')
+        listener = util.create_listener(self.listen_address)
+        listener.setblocking(False)
+        fname = os.path.join(self.data_dir, 'backend.addr')
+        addr = util.unparse_address(listener.getsockname())
+        with open(fname, 'w') as fout:
+            fout.write('{}\n'.format(addr))
+        self.logger.info('listening on: {}'.format(addr))
+        handler = SocketAPIHandler()
+        messagebus = singleton(MessageBusServer, listener, self.auth_token,
+                               handler)
+        if self.options.get('trace'):
+            fname = os.path.join(self.data_dir, 'backend.trace')
+            messagebus.set_trace(fname)
+        def messagebus_event(event, *args):
+            if event == 'LastConnectionClosed':
+                self.stop()
+        messagebus.add_callback(messagebus_event)
         messagebus.start()
-        self.messagebus = messagebus
 
-    def _run_until_stopped(self):
-        """Run the loop until the backend is notified to stop."""
-        raise NotImplementedError
+        self.logger.debug('installing signal handlers')
+        on_signal = get_hub().loop.signal(signal.SIGTERM)
+        on_signal.start(self.stop)
 
-    def _stop_backend(self):
-        """Gracefully shut down the backend components."""
-        instance(MessageBusServer).stop()
-        instance(Database).close()
+        monkey.patch_time() # Make Thread.join() cooperative.
 
-    def main(self):
-        """Run the backend main loop."""
-        self.logger.debug('starting backend components')
-        self._start_backend()
-        self.logger.debug('starting backend event loop')
-        self._run_until_stopped()
+        self.logger.debug('all backend components succesfully initialized')
+
+        # This is where the backend runs (until stopped).
+        self._stop_event.wait()
+
         self.logger.debug('backend event loop terminated')
-        self._stop_backend()
-        self.logger.debug('cleaned up backend components')
 
-    def start(self, timeout):
-        """Start the backend. This runs the main() function."""
+        self.logger.debug('shutting down control API')
+        messagebus.stop()
+
+        self.logger.debug('shutting down database')
+        database.close()
+
+        self.logger.debug('stopped all backend components')
+
+    def stop(self):
+        self._stop_event.set()
+
+
+class BackendController(object):
+    """Backend process controller.
+
+    This class provide functionality to query, start and stop the status of a
+    Bluepass backend.
+    """
+
+    def __init__(self, options, timeout=5):
+        self.options = options
+        self.timeout = timeout
+        self.data_dir = options.get('data_dir')
+        if self.data_dir is None:
+            self.data_dir = platform.get_appdir('bluepass')
+
+    def start(self):
+        """Start up the backend."""
         raise NotImplementedError
 
-    def stop(self, timeout):
+    def stop(self):
         """Stop the backend."""
         raise NotImplementedError
+
+    def connect(self):
+        """Connect to the backend."""
+        raise NotImplementedError
+
+    def backend_address(self):
+        """Return the address the backend is listening on."""
+        addrname = os.path.join(self.data_dir, 'backend.addr')
+        st = util.try_stat(addrname)
+        if st is None:
+            return None
+        elif not stat.S_ISREG(st.st_mode):
+            raise RuntimeError('Not a regular file: {}'.format(addrname))
+        with open(addrname) as fin:
+            addr = fin.readline().rstrip()
+        if not addr:
+            raise RuntimeError('Empty backend address')
+        return addr
+
+    def startup_info(self):
+        """Return a (executable, args, env) tuple that can be used to start up
+        the backend."""
+        executable = sys.executable
+        args = ['python', '-mbluepass.backend']
+        for key in ('data_dir', 'debug', 'log_stdout', 'listen', 'trace'):
+            value = self.options.get(key)
+            if value is None:
+                continue
+            optname = '--{}'.format(key.replace('_', '-'))
+            if isinstance(value, bool):
+                if value:
+                    args.append(optname)
+            else:
+                args += [optname, value]
+        env = os.environ.copy()
+        if 'auth_token' in self.options:
+            env['BLUEPASS_AUTH_TOKEN'] = self.options['auth_token']
+        return executable, args, env
+
+
+# Trampoline used by BackendController to start up the backend
+# without needing "bluepass-backend in $PATH.
+if __name__ == '__main__':
+    from bluepass import main
+    sys.exit(main.backend())

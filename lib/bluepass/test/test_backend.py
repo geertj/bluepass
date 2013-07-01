@@ -9,31 +9,40 @@
 import os
 import time
 import socket
+import signal
 
 from gevent import core
 from bluepass.factory import create
+from bluepass.database import DatabaseError
 from bluepass.test.unit import UnitTest, assert_raises
-from bluepass.backend import start_backend, stop_backend, Backend
+from bluepass.backend import Backend, BackendController
 from bluepass.messagebus import MessageBusConnection, MessageBusError
+from bluepass.util import misc as util
 
 
 class TestBackend(UnitTest):
 
     def setup(self):
         os.environ['HOME'] = self.tempdir()
-        self.config = { 'debug': True, 'log_stdout': False }
-        status, detail = start_backend(5, self.config)
-        if not status:
-            raise AssertionError('Could not start backend: %s: %s', detail)
-        ipaddr, port, authtok = detail
-        csock = socket.socket()
-        csock.connect((ipaddr, port))
+        authtok = os.urandom(16).encode('hex')
+        self.config = { 'debug': True, 'log_stdout': False,
+                        'auth_token': authtok }
+        # XXX: Create a Posix/Windows controller? For now just os.spawnve()
+        # and a timeout.
+        ctrl = BackendController(self.config)
+        cmd, args, env = ctrl.startup_info()
+        self.backend_pid = os.spawnve(os.P_NOWAIT, cmd, args, env)
+        time.sleep(1)
+        addrspec = ctrl.backend_address()
+        addr = util.parse_address(addrspec)
+        csock = util.create_connection(addr)
         self.connection = MessageBusConnection(csock, authtok)
-        #self.connection._set_trace(file('/tmp/client.txt', 'w'))
 
     def teardown(self):
         self.connection.close()
-        stop_backend(5)
+        time.sleep(0.5)
+        os.kill(self.backend_pid, signal.SIGTERM)
+        time.sleep(0.5)
 
     def test_db_created(self):
         dbname = os.path.join(os.environ['HOME'], '.bluepass', 'bluepass.db')
@@ -42,17 +51,9 @@ class TestBackend(UnitTest):
         assert os.access(dbname, os.R_OK)
 
     def test_multiple_startup(self):
-        # start_backend() will not launch multiple backends
-        status, detail = start_backend(Backend)
-        assert status is False
-        assert detail[0] == 'Exists'
-        # create it ourselves. now the db locking prevents a startup
-        orig = Backend.instance
-        backend = create(Backend, self.config)
-        status = backend.start(5)
-        assert status is False
-        assert backend.error_name == 'Locked'
-        Backend.instance = orig
+        backend = Backend(self.config)
+        exc = assert_raises(DatabaseError, backend.run)
+        assert exc.error_name == 'Locked'
 
     def test_config(self):
         conn = self.connection

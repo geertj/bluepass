@@ -14,6 +14,9 @@ import pwd
 import fcntl
 import errno
 
+__all__ = ['get_username', 'get_homedir', 'get_appdir', 'get_sockdir', 
+           'LockError', 'lock_file', 'unlock_file']
+
 
 def get_username(uid=None):
     """Return the current user's name."""
@@ -65,6 +68,18 @@ def get_appdir(appname):
     appdir = candidates[0]
     os.mkdir(appdir)
     return appdir
+
+
+def get_sockdir():
+    """Return the per-user socket directory."""
+    sockdir = '/var/run/user/{0}'.format(os.getuid())
+    try:
+        st = os.stat(sockdir)
+    except OSError:
+        st = None
+    if st and stat.S_ISDIR(st.st_mode):
+        return sockdir
+    return get_appdir()
 
 
 class LockError(Exception):
