@@ -39,7 +39,7 @@ def parse_address(s):
 def unparse_address(address):
     """Convert a socket address into a string form."""
     if isinstance(address, tuple):
-        s = '{[0]}:{[1]}'.format(address)
+        s = '{0[0]}:{0[1]}'.format(address)
     else:
         s = address
     return s
