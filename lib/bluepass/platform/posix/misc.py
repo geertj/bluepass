@@ -79,7 +79,7 @@ def get_sockdir():
         st = None
     if st and stat.S_ISDIR(st.st_mode):
         return sockdir
-    return get_appdir()
+    return get_appdir('bluepass')
 
 
 class LockError(Exception):
