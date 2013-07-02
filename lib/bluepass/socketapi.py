@@ -47,6 +47,10 @@ class SocketAPIHandler(MessageBusHandler):
 
     @method()
     def get_version_info(self):
+        """Get version information.
+
+        Returns a dictionary containing at least the key "version".
+        """
         version_info = {}
         for name in dir(_version):
             if name.startswith('_'):
@@ -58,21 +62,43 @@ class SocketAPIHandler(MessageBusHandler):
 
     @method()
     def get_config(self):
+        """Return the configuration object.
+
+        The configuration object is a dictionary that can be used by frontends
+        to store configuration data.
+        """
         return instance(Model).get_config()
 
     @method()
     def update_config(self, config):
+        """Update the configuration object."""
         return instance(Model).update_config(config)
 
     @method()
-    def create_vault(self, name, password, uuid=None, async=False):
+    def create_vault(self, name, password, async=False):
+        """Create a new vault.
+
+        The vault will have the name *name*. The vault's private keys will be
+        encrypted with *password*.
+
+        The *async* parameter specifies if the vault creation needs to be
+        asynchronous. If it is set to False, then the vault is created
+        synchronously and it is returned as a dictionary. If async is set to
+        True, then this will return the UUID of the vault as a stirng. Once the
+        vault has been created, the ``VaultCreationComplete`` signal will be
+        raised. The signal has three arguments: the UUID, a status code, and a
+        detailed message.
+
+        Creating a vault requires the backend to generate 3 RSA keys. This can
+        be a time consuming process. Therefore it is recommended to use
+        asynchronous vault creation in user interfaces.
+        """
         # Vault creation is time consuming because 3 RSA keys have
         # to be generated. Therefore an async variant is provided.
         model = instance(Model)
         if not async:
-            return model.create_vault(name, password, uuid)
-        if uuid is None:
-            uuid = self.crypto.randuuid()
+            return model.create_vault(name, password)
+        uuid = self.crypto.randuuid()
         self.early_response(uuid)
         try:
             vault = model.create_vault(name, password, uuid)
@@ -90,85 +116,203 @@ class SocketAPIHandler(MessageBusHandler):
 
     @method()
     def get_vault(self, uuid):
+        """Return the vault with UUID *uuid*.
+
+        The result value is a dictionary containing the vault metadata, or
+        ``None`` if the vault was not found.
+        """
         return instance(Model).get_vault(uuid)
 
     @method()
     def get_vaults(self):
+        """Return a list of all vaults.
+
+        The result value is a list if dictionaries containing vault metadata.
+        """
         return instance(Model).get_vaults()
 
     @method()
     def update_vault(self, vault):
+        """Update a vault's metadata.
+
+        The *vault* parameter must be a dictionary. The recommended way to use
+        this function is to use :meth:`get_vault` to retrieve the metadata,
+        make updates, make updates to it, and the use this method to save the
+        updates.
+
+        On success, nothing is returned. On error, an exception is raised.
+        """
         return instance(Model).update_vault(uuid, vault)
 
     @method()
     def delete_vault(self, vault):
+        """Delete a vault and all its items.
+
+        The *vault* parameter must be a vault metadata dictionary returned by
+        :meth:`get_vault`.
+        """
         return instance(Model).delete_vault(vault)
 
     @method()
     def get_vault_statistics(self, uuid):
+        """Return statistics about a vault.
+
+        The return value is a dictionary.
+        """
         return instance(Model).get_vault_statistics(uuid)
 
     @method()
     def unlock_vault(self, uuid, password):
+        """Unlock a vault.
+
+        The vault *uuid* is unlocked using *password*. This decrypts the
+        private keys that are stored in the database and stored them in
+        memory.
+
+        On error, an exception is raised. It is not an error to unlock a vault
+        that is already unlocked.
+        """
         return instance(Model).unlock_vault(uuid, password)
 
     @method()
     def lock_vault(self, uuid):
+        """Lock a vault.
+
+        This destroys the decrypted private keys and any other decrypted items
+        that are cached.
+
+        It is not an error to lock a vault that is already locked.
+        """
         return instance(Model).lock_vault(uuid)
 
     @method()
     def vault_is_locked(self, uuid):
+        """Return whether or not the vault *uuid* is locked."""
         return instance(Model).vault_is_locked(uuid)
 
     @method()
     def get_version(self, vault, uuid):
+        """Return a version from a vault.
+
+        The latest version identified by *uuid* is returned from *vault*.  The
+        version is returned as a dictionary. If the version does not exist,
+        ``None`` is returned.
+        
+        In Bluepass, vaults contain versions. Think of a version as an
+        arbitrary object that is versioned and encrypted. A version has at
+        least "id" and "_type" keys. The "id" will stay constant over the
+        entire lifetime of the version. Newer versions supersede older
+        versions. This method call returns the newest instance of the version.
+
+        Versions are the unit of synchronization in our peer to peer
+        replication protocol. They are also the unit of encryption. Both
+        passwords are groups are stored as versions.
+        """
         return instance(Model).get_version(vault, uuid)
 
     @method()
     def get_versions(self, vault):
+        """Return the newest instances for all versions in a vault.
+
+        The return value is a list of dictionaries.
+        """
         return instance(Model).get_versions(vault)
 
     @method()
     def add_version(self, vault, version):
+        """Add a new version to a vault.
+
+        The *version* parameter must be a dictionary. The version is a new
+        version and should not contain and "id" key yet.
+        """
         return instance(Model).add_version(vault, version)
 
     @method()
     def update_version(self, vault, version):
+        """Update an existing version.
+
+        The *version* parameter should be a dictionary. It must have an "id"
+        of a version that already exists. The version will become the latest
+        version of the specific id.
+        """
         return instance(Model).update_version(vault, version)
 
     @method()
     def delete_version(self, vault, version):
+        """Delete a version from a vault.
+
+        This create a special updated version of the record with a "deleted"
+        flag set. By default, deleted versions do not show up in the output of
+        :meth:`get_versions`.
+        """
         return instance(Model).delete_version(vault, version)
 
     @method()
     def get_version_history(self, vault, uuid):
+        """Get the history of a version.
+
+        This returns a ordered list with the linear history all the way from
+        the current newest instance of the version, back to the first version.
+        """
         return instance(Model).get_version_history(vault, uuid)
 
     # Password methods
 
     @method()
     def generate_password(self, method, *args):
+        """Generate a password.
+
+        The *method* specifies the method. It can currently be "diceware" or
+        "random". The "diceware" method takes one argument: an integer with the
+        number of words to generate. The "random" method takes two arguments:
+        th size in character, and an alphabest in the form of a regular
+        expression character set (e.g. [a-zA-Z0-9]).
+        """
         return instance(PasswordGenerator).generate(method, *args)
 
     @method()
     def password_strength(self, method, *args):
+        """Return the strength of a password that was generated by
+        :meth:`generate_password`.
+
+        The return value is an integer indicating the entropy of the password
+        in bits.
+        """
         return instance(PasswordGenerator).strength(method, *args)
 
     # Locator methods
 
     @method()
     def get_neighbors(self):
+        """Return current neighbords on the network.
+
+        The return value is a list of dictionaries.
+        """
         return instance(Locator).get_neighbors()
 
     # Pairing methods
 
     @method()
     def set_allow_pairing(self, timeout):
+        """Be visible on the network for *timeout* seconds.
+
+        When visible, other instances of Bluepass will be able to find us, and
+        initiate a pairing request. The pairing request will still have to be
+        approved, and PIN codes needs to be exchanged.
+        """
         publisher = instance(SyncAPIPublisher)
         publisher.set_allow_pairing(timeout)
 
     @method()
     def pair_neighbor_step1(self, node, source):
+        """Start a new pairing process.
+
+        A pairing process is started with node *node* residing in source
+        *source*.
+
+        The return value is a string containing a random cookie that identifies
+        the current request.
+        """
         locator = instance(Locator)
         neighbor = locator.get_neighbor(node, source)
         if neighbor is None:
@@ -206,6 +350,20 @@ class SocketAPIHandler(MessageBusHandler):
 
     @method()
     def pair_neighbor_step2(self, cookie, pin, name, password):
+        """Complete a pairing process.
+
+        The *cookie* argument are returned by :meth:`pair_neighbor_step1`. The
+        *pin* argument is the PIN code that the remote Bluepass instance showed
+        to its user. The *name* and *password* arguments specify the name and
+        password of the paired vault that is created in the local instance.
+
+        Paired vaults will automatically be kept up to date. Changes made in a
+        paired vault in once Bluepass instance will automatically be synced to
+        other instances by the Bluepass backend.
+
+        To get notified of new versions that were added, listen for the
+        ``VersionsAdded`` signal.
+        """
         if cookie not in self.pairdata:
             raise PairingError('NotFound', 'No such key exchange ID')
         kxid, neighbor, addr = self.pairdata.pop(cookie)

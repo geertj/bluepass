@@ -118,8 +118,8 @@ class BackendProxy(QObject):
     def update_config(self, config):
         return self._call_method('update_config', config)
 
-    def create_vault(self, name, password, uuid=None, async=False):
-        return self._call_method('create_vault', name, password, uuid, async)
+    def create_vault(self, name, password, async=False):
+        return self._call_method('create_vault', name, password, async)
 
     def get_vault(self, uuid):
         return self._call_method('get_vault', uuid)
