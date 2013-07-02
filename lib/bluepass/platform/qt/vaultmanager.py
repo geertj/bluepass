@@ -358,6 +358,7 @@ class CreateVault(Page):
         self.name = name
         self.method = 0
         self.uuid = None
+        self.cookie = None
         self.logger = logging.getLogger(__name__)
         self.addWidgets()
         self.setStyleSheet(self.stylesheet)
@@ -616,6 +617,7 @@ class ShowNeighbors(Page):
         self.name = name
         self.addWidgets()
         self.loadNeighbors()
+        self.cookie = None
         backend = QApplication.instance().backend()
         backend.PairNeighborStep1Completed.connect(self.pairNeighborStep1Completed)
 
