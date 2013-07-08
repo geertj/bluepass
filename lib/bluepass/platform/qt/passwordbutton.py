@@ -6,8 +6,8 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
-from PySide.QtCore import QTimer, Signal, Slot, Property, Qt, QPoint
-from PySide.QtGui import (QPushButton, QStylePainter, QStyleOptionButton,
+from PyQt4.QtCore import QTimer, Signal, Slot, Property, Qt, QPoint
+from PyQt4.QtGui import (QPushButton, QStylePainter, QStyleOptionButton,
         QStyle, QGridLayout, QWidget, QLabel, QSpinBox, QLineEdit, QFrame,
         QApplication, QCheckBox, QFontMetrics)
 

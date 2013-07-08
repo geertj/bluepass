@@ -12,7 +12,7 @@ import socket
 from bluepass.backend import BackendController
 from bluepass.util import misc as util
 
-from PySide.QtCore import QObject, QProcess, Signal
+from PyQt4.QtCore import QObject, QProcess, Signal
 
 
 class QtBackendController(BackendController):
@@ -89,9 +89,8 @@ class BackendProxy(QObject):
         The signal is passed on as a Qt Signal().
         """
         name = message['method']
-        print 'SIGNAL', name
         signal = getattr(self, name, None)
-        if signal and isinstance(signal, Signal):
+        if signal and hasattr(signal, 'emit'):
             signal.emit(*message.get('params', ()))
 
     VaultAdded = Signal(dict)

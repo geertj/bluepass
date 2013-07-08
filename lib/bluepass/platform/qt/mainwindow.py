@@ -6,8 +6,8 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
-from PySide.QtCore import QPoint, Qt, Slot, Signal
-from PySide.QtGui import (QLabel, QLineEdit, QIcon, QPixmap, QPushButton,
+from PyQt4.QtCore import QPoint, Qt, Slot, Signal
+from PyQt4.QtGui import (QLabel, QLineEdit, QIcon, QPixmap, QPushButton,
         QAction, QMenu, QStatusBar, QKeySequence, QWidget, QFrame,
         QHBoxLayout, QVBoxLayout, QApplication, QMessageBox)
 

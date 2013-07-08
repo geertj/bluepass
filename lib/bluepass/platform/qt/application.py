@@ -7,7 +7,7 @@
 # licensing terms.
 
 import sys
-from PySide.QtGui import QApplication, QIcon, QPixmap
+from PyQt4.QtGui import QApplication, QIcon, QPixmap
 from bluepass.factory import create, instance
 from bluepass.platform.qt.backend import BackendProxy
 from bluepass.platform.qt.util import iconpath

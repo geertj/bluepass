@@ -8,9 +8,9 @@
 
 from bluepass.messagebus import *
 
-from PySide.QtCore import (QEvent, QObject, QSocketNotifier, QTimer,
+from PyQt4.QtCore import (QEvent, QObject, QSocketNotifier, QTimer,
         QEventLoop)
-from PySide.QtGui import QApplication
+from PyQt4.QtGui import QApplication
 
 
 class CallbackEvent(QEvent):

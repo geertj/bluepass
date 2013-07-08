@@ -19,7 +19,7 @@ class QtFrontend(Frontend):
     """Qt frontend for Bluepass."""
 
     name = 'qt'
-    description = 'GUI frontend based on Qt and PySide'
+    description = 'GUI frontend based on Qt and PyQt4'
 
     @classmethod
     def add_args(cls, parser):

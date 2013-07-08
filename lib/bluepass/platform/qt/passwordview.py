@@ -10,8 +10,8 @@ import math
 import logging
 from string import Template
 
-from PySide.QtCore import Slot, Signal, Property, Qt, QTimer
-from PySide.QtGui import (QScrollArea, QWidget, QLabel, QVBoxLayout, QPixmap,
+from PyQt4.QtCore import Slot, Signal, Property, Qt, QTimer
+from PyQt4.QtGui import (QScrollArea, QWidget, QLabel, QVBoxLayout, QPixmap,
         QHBoxLayout, QVBoxLayout, QPushButton, QLineEdit, QFrame, QIcon,
         QApplication, QTabBar, QSizePolicy, QCheckBox, QStackedWidget,
         QGridLayout, QMenu, QKeySequence)

@@ -6,8 +6,8 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
-from PySide.QtCore import Slot, Qt
-from PySide.QtGui import (QDialog, QLineEdit, QTextEdit, QComboBox, QLabel,
+from PyQt4.QtCore import Slot, Qt
+from PyQt4.QtGui import (QDialog, QLineEdit, QTextEdit, QComboBox, QLabel,
         QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout, QApplication,
         QIcon, QPixmap)
 

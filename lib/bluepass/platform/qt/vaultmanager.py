@@ -9,8 +9,8 @@
 import time
 import logging
 
-from PySide.QtCore import Slot, Qt, QTimer, QPoint, QSize, QTimer, QEventLoop
-from PySide.QtGui import (QWidget, QDialog, QPushButton, QHBoxLayout,
+from PyQt4.QtCore import Slot, Qt, QTimer, QPoint, QSize, QTimer, QEventLoop
+from PyQt4.QtGui import (QWidget, QDialog, QPushButton, QHBoxLayout,
         QVBoxLayout, QStackedWidget, QTableWidget, QTableWidgetItem,
         QFrame, QHeaderView, QApplication, QGridLayout, QLineEdit,
         QLabel, QCheckBox, QMessageBox, QComboBox, QMenu, QFont,
@@ -223,7 +223,7 @@ class ManageVaults(Page):
         items = self.table.selectedItems()
         self.removebtn.setEnabled(len(items) > 0)
 
-    @Slot()
+    @Slot(dict)
     def vaultAdded(self, vault):
         table = self.table
         row = table.rowCount(); table.setRowCount(row+1)
@@ -235,7 +235,7 @@ class ManageVaults(Page):
         table.setItem(row, 3, Item(str(stats['trusted_nodes'])))
         table.sortItems(1)
 
-    @Slot()
+    @Slot(dict)
     def vaultRemoved(self, vault):
         rows = self.table.rowCount()
         for row in range(rows):
