@@ -82,7 +82,7 @@ class Model(object):
                                 'pwcheck', 'algo', 'random', 'verifier',
                              'auth', 'keytype', 'private', 'public', 'encinfo',
                                 'algo'))
-        except json.UnpackError, e:
+        except json.UnpackError as e:
             return False, str(e)
         if not check_uuid4(u[0]):
             return False, 'Illegal UUID "%s"' % u[0]

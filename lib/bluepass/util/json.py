@@ -8,6 +8,7 @@
 
 from __future__ import absolute_import
 
+import six
 from json import *
 import itertools
 
@@ -88,7 +89,7 @@ class Unpacker(object):
         if self.current is None or self.current not in tokens:
             return ''
         old = self.current
-        self.current = self._tokeniter.next()
+        self.current = next(self._tokeniter)
         return old
 
     def _expect(self, tokens):
@@ -96,7 +97,7 @@ class Unpacker(object):
         if self.current is None or self.current not in tokens:
             raise ValueError('expecting token: %s (got: %s)' % (tokens, self.current))
         old = self.current
-        self.current = self._tokeniter.next()
+        self.current = next(self._tokeniter)
         return old
 
     def unpack(self, obj, names=()):
@@ -105,7 +106,7 @@ class Unpacker(object):
         entries. The return value is a single, flat tuple with all the
         unpackged values."""
         self._tokeniter = itertools.chain(self._tokenize(), (None,))
-        self.current = self._tokeniter.next()
+        self.current = next(self._tokeniter)
         self._nameiter = itertools.chain(names, (None,))
         self.values = []
         names = iter(names)
@@ -141,7 +142,7 @@ class Unpacker(object):
                 break
             self._expect('s')
             opt = self._accept('?')
-            name = self._nameiter.next()
+            name = next(self._nameiter)
             if name is None:
                 raise UnpackError('not enough name arguments provided')
             keys.add(name)
@@ -187,7 +188,7 @@ class Unpacker(object):
             raise UnpackError('expecting integer')
         elif typ == 'u' and not (isinstance(ctx, int) and ctx >= 0):
             raise UnpackError('expecting unsigned integer')
-        elif typ == 's' and not isinstance(ctx, (str, unicode)):
+        elif typ == 's' and not isinstance(ctx, six.string_types):
             raise UnpackError('expecting string')
         elif typ == 'f' and not isinstance(ctx, float):
             raise UnpackError('expecting float')

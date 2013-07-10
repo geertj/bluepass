@@ -11,9 +11,15 @@ import sys
 import time
 import logging
 import traceback
-import httplib as http
-from httplib import HTTPException
-from urlparse import parse_qs
+
+try:
+    import httplib as http
+    from httplib import HTTPException
+    from urlparse import parse_qs
+except ImportError:
+    from http import client as http
+    from http.client import HTTPException
+    from urllib.parse import parse_qs
 
 from gevent import socket, local, Greenlet
 from gevent.event import Event
@@ -373,7 +379,7 @@ def expose(path, **kwargs):
     def _f(func):
         func.path = path
         func.kwargs = kwargs
-        func.kwargs['handler'] = func.func_name
+        func.kwargs['handler'] = func.__name__
         return func
     return _f
 
@@ -463,7 +469,7 @@ class WSGIApplication(object):
         handler = getattr(self,  match['handler'])
         try:
             result = handler(env)
-        except HTTPReturn, e:
+        except HTTPReturn as e:
             return self._simple_response(e.status, e.headers)
         except Exception:
             lines = ['An uncaught exception occurred\n']

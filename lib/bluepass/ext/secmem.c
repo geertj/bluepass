@@ -10,7 +10,6 @@
 #include <Python.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/mman.h>
 
 
 static PyObject *secmem_Error = NULL;
@@ -22,7 +21,28 @@ static PyObject *secmem_Error = NULL;
     } while (0)
 
 
+#if PY_MAJOR_VERSION >= 3
+#  define MOD_OK(val) (val)
+#  define MOD_ERROR NULL
+#  define MOD_INITFUNC(name) PyMODINIT_FUNC PyInit_ ## name(void)
+#  define INIT_MODULE(mod, name, doc, methods) \
+        do { \
+            static struct PyModuleDef moduledef = { \
+                PyModuleDef_HEAD_INIT, name, doc, -1, methods, }; \
+            mod = PyModule_Create(&moduledef); \
+        } while (0)
+#else
+#  define MOD_OK(value)
+#  define MOD_ERROR
+#  define MOD_INITFUNC(name) void init ## name(void)
+#  define INIT_MODULE(mod, name, doc, methods) \
+          do { mod = Py_InitModule3(name, methods, doc); } while (0)
+#endif
+
+
 #if defined(__linux__) || defined(__APPLE__)
+
+#include <sys/mman.h>
 
 static PyObject *
 secmem_lock(PyObject *self, PyObject *args)
@@ -30,22 +50,22 @@ secmem_lock(PyObject *self, PyObject *args)
     char *start, *end;
     int ret;
     long pagesize;
-    PyStringObject *s;
+    PyBytesObject *b;
     PyObject *Pret = NULL;
 
-    if (!PyArg_ParseTuple(args, "O!:lock", &PyString_Type, &s))
+    if (!PyArg_ParseTuple(args, "O!:lock", &PyBytes_Type, &b))
         return NULL;
 
     pagesize = sysconf(_SC_PAGESIZE);
     if (pagesize < 0)
         RETURN_ERROR("sysconf(): %s", strerror(errno));
 
-    start = (char *) s;
+    start = (char *) b;
     start -= ((unsigned long) start % pagesize);
-    end = (char *) s + s->ob_size - 1;
+    end = (char *) b + Py_SIZE(b) - 1;
     end += (pagesize - (unsigned long) end % pagesize);
     ret = mlock(start, end-start);
-    Pret = PyInt_FromLong(!(ret < 0));
+    Pret = PyLong_FromLong(!(ret < 0));
 
 error:
     return Pret;
@@ -57,22 +77,22 @@ secmem_unlock(PyObject *self, PyObject *args)
     char *start, *end;
     int ret;
     long pagesize;
-    PyStringObject *s;
+    PyBytesObject *b;
     PyObject *Pret = NULL;
 
-    if (!PyArg_ParseTuple(args, "O!:unlock", &PyString_Type, &s))
+    if (!PyArg_ParseTuple(args, "O!:unlock", &PyBytes_Type, &b))
         return NULL;
 
     pagesize = sysconf(_SC_PAGESIZE);
     if (pagesize < 0)
         RETURN_ERROR("sysconf(): %s", strerror(errno));
 
-    start = (char *) s;
+    start = (char *) b;
     start -= ((unsigned long) start % pagesize);
-    end = (char *) s + s->ob_size - 1;
+    end = (char *) b + Py_SIZE(b) - 1;
     end += (pagesize - (unsigned long) end % pagesize);
     ret = munlock(start, end-start);
-    Pret = PyInt_FromLong(!(ret < 0));
+    Pret = PyLong_FromLong(!(ret < 0));
 
 error:
     return Pret;
@@ -83,16 +103,26 @@ error:
 static PyObject *
 secmem_lock(PyObject *self, PyObject *args)
 {
-    if (!PyArg_ParseTuple(args, "O!:lock", &PyString_Type, &s))
+    PyBytesObject *b;
+
+    if (!PyArg_ParseTuple(args, "O!:lock", &PyBytes_Type, &b))
         return NULL;
+
+    PyErr_WarnEx(PyExc_UserWarning, "mlock() not available on this platform");
+
     return PyInt_FromLong(0);
 }
 
 static PyObject *
 secmem_unlock(PyObject *self, PyObject *args)
 {
-    if (!PyArg_ParseTuple(args, "O!:lock", &PyString_Type, &s))
+    PyBytesObject *b;
+
+    if (!PyArg_ParseTuple(args, "O!:lock", &PyBytes_Type, &b))
         return NULL;
+
+    PyErr_WarnEx(PyExc_UserWarning, "munlock() not available on this platform");
+
     return PyInt_FromLong(0);
 }
 
@@ -101,28 +131,18 @@ secmem_unlock(PyObject *self, PyObject *args)
 static PyObject *
 secmem_wipe(PyObject *self, PyObject *args)
 {
-    PyObject *obj, *Pret = NULL;
-    PyStringObject *s;
-    PyUnicodeObject *u;
+    PyObject *Pret = NULL;
+    PyBytesObject *b;
 
-    if (!PyArg_ParseTuple(args, "O", &obj))
+    if (!PyArg_ParseTuple(args, "O!", &PyBytes_Type, &b))
         return NULL;
 
-    if (PyString_Check(obj)) {
-        s = (PyStringObject *) obj;
-        memset(s->ob_sval, 0, s->ob_size);
-        s->ob_shash = -1;
-    } else if (PyUnicode_Check(obj)) {
-        u = (PyUnicodeObject *) obj;
-        memset(u->str, 0, u->length);
-        u->hash = -1;
-    } else
-        RETURN_ERROR("expecting str or unicode object");
+    memset(b->ob_sval, 0, Py_SIZE(b));
+    b->ob_shash = -1;
 
     Py_INCREF(Py_None);
     Pret = Py_None;
 
-error:
     return Pret;
 }
 
@@ -138,8 +158,10 @@ secmem_disable_ptrace(PyObject *self, PyObject *args)
 
     if (!PyArg_ParseTuple(args, ":disable_ptrace"))
         return NULL;
+
     ret = prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
     Pret = PyBool_FromLong(!(ret < 0));
+
     return Pret;
 }
 
@@ -152,9 +174,10 @@ secmem_disable_ptrace(PyObject *self, PyObject *args)
 
     if (!PyArg_ParseTuple(args, ":disable_ptrace"))
         return NULL;
-    PyErr_WarnEx(PyExc_UserWarning, "don't know how to disable ptrace() "
-                 "on this platform", 1);
+
+    PyErr_WarnEx(PyExc_UserWarning, "prctl() not available on this platform");
     Pret = PyBool_FromLong(0);
+
     return Pret;
 }
 
@@ -169,17 +192,20 @@ static PyMethodDef secmem_methods[] =
     { NULL, NULL }
 };
 
-void
-initsecmem(void)
+PyDoc_STRVAR(secmem_doc, "Secure memory functions");
+
+MOD_INITFUNC(secmem)
 {
     PyObject *Pdict, *Pmodule;
 
-    if ((Pmodule = Py_InitModule("secmem", secmem_methods)) == NULL)
-        return;
+    INIT_MODULE(Pmodule, "secmem", secmem_doc, secmem_methods);
+
     if ((Pdict = PyModule_GetDict(Pmodule)) == NULL)
-        return;
+        return MOD_ERROR;
     if ((secmem_Error = PyErr_NewException("secmem.Error", NULL, NULL)) == NULL)
-        return;
+        return MOD_ERROR;
     if (PyDict_SetItemString(Pdict, "Error", secmem_Error) == -1)
-        return;
+        return MOD_ERROR;
+
+    return MOD_OK(Pmodule);
 }

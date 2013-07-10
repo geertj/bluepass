@@ -6,6 +6,8 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
+from __future__ import absolute_import, print_function
+
 from PyQt4.QtCore import Slot, Qt
 from PyQt4.QtGui import (QDialog, QLineEdit, QTextEdit, QComboBox, QLabel,
         QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout, QApplication,

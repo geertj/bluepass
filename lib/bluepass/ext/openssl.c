@@ -77,13 +77,32 @@ static PyObject *openssl_Error = NULL;
 #define RSA_clear_free RSA_free
 #define DH_clear_free DH_free
 
-#define PyString_ClearFree(s) \
+#define PyBytes_ClearFree(s) \
     do { if (s != NULL) { \
-        PyStringObject *_s = (PyStringObject *) s; \
-        if (_s->ob_sval && _s->ob_size > 0) \
-            memset(_s->ob_sval, 0, _s->ob_size); \
+        PyBytesObject *_s = (PyBytesObject *) s; \
+        if (_s->ob_sval && Py_SIZE(_s) > 0) \
+            memset(_s->ob_sval, 0, Py_SIZE(_s)); \
         Py_DECREF(s); \
     } } while (0)
+
+
+#if PY_MAJOR_VERSION >= 3
+#  define MOD_OK(val) (val)
+#  define MOD_ERROR NULL
+#  define MOD_INITFUNC(name) PyMODINIT_FUNC PyInit_ ## name(void)
+#  define INIT_MODULE(mod, name, doc, methods) \
+        do { \
+            static struct PyModuleDef moduledef = { \
+                PyModuleDef_HEAD_INIT, name, doc, -1, methods, }; \
+            mod = PyModule_Create(&moduledef); \
+        } while (0)
+#else
+#  define MOD_OK(value)
+#  define MOD_ERROR
+#  define MOD_INITFUNC(name) void init ## name(void)
+#  define INIT_MODULE(mod, name, doc, methods) \
+          do { mod = Py_InitModule3(name, methods, doc); } while (0)
+#endif
 
 
 static PyObject *
@@ -124,9 +143,9 @@ openssl_rsa_genkey(PyObject *self, PyObject *args)
 
     Presult = PyTuple_New(2);
     CHECK_PYTHON_ERROR(Presult == NULL);
-    Pprivkey = PyString_FromStringAndSize((char *) privkey, privlen);
+    Pprivkey = PyBytes_FromStringAndSize((char *) privkey, privlen);
     CHECK_PYTHON_ERROR(Pprivkey == NULL);
-    Ppubkey = PyString_FromStringAndSize((char *) pubkey, publen);
+    Ppubkey = PyBytes_FromStringAndSize((char *) pubkey, publen);
     CHECK_PYTHON_ERROR(Ppubkey == NULL);
     PyTuple_SET_ITEM(Presult, 0, Pprivkey);
     PyTuple_SET_ITEM(Presult, 1, Ppubkey);
@@ -134,8 +153,8 @@ openssl_rsa_genkey(PyObject *self, PyObject *args)
 
 error:
     Py_XDECREF(Presult);
-    PyString_ClearFree(Pprivkey);
-    PyString_ClearFree(Ppubkey);
+    PyBytes_ClearFree(Pprivkey);
+    PyBytes_ClearFree(Ppubkey);
 
 cleanup:
     RSA_clear_free(rsa);
@@ -181,7 +200,7 @@ openssl_rsa_size(PyObject *self, PyObject *args)
 
     rsa = d2i_RSAPublicKey(NULL, (const unsigned char **) &key, keylen);
     CHECK_OPENSSL_ERROR(rsa == NULL);
-    Presult = PyInt_FromLong(RSA_size(rsa) * 8);
+    Presult = PyLong_FromLong(RSA_size(rsa) * 8);
     CHECK_PYTHON_ERROR(Presult == NULL);
 
 error:
@@ -210,7 +229,7 @@ openssl_rsa_encrypt(PyObject *self, PyObject *args)
     MALLOC(out, outlen);
     size = RSA_public_encrypt(inlen, in, out, rsa, RSA_PKCS1_OAEP_PADDING);
     CHECK_OPENSSL_ERROR(size <= 0);
-    Pout = PyString_FromStringAndSize((char *) out, size);
+    Pout = PyBytes_FromStringAndSize((char *) out, size);
     CHECK_PYTHON_ERROR(Pout == NULL);
 
 error:
@@ -240,7 +259,7 @@ openssl_rsa_decrypt(PyObject *self, PyObject *args)
     MALLOC(out, outlen);
     size = RSA_private_decrypt(inlen, in, out, rsa, RSA_PKCS1_OAEP_PADDING);
     CHECK_OPENSSL_ERROR(size < 0);
-    Pout = PyString_FromStringAndSize((char *) out, size);
+    Pout = PyBytes_FromStringAndSize((char *) out, size);
     CHECK_PYTHON_ERROR(Pout == NULL);
 
 error:
@@ -288,7 +307,7 @@ openssl_rsa_sign(PyObject *self, PyObject *args)
     MALLOC(sig, siglen);
     size = RSA_private_encrypt(RSA_size(rsa), em, sig, rsa, RSA_NO_PADDING);
     CHECK_OPENSSL_ERROR(size <= 0);
-    Psig = PyString_FromStringAndSize((char *) sig, size);
+    Psig = PyBytes_FromStringAndSize((char *) sig, size);
     CHECK_PYTHON_ERROR(Psig == NULL);
 
 error:
@@ -372,7 +391,7 @@ openssl_dh_genparams(PyObject *self, PyObject *args)
     }
     size = i2d_DHparams(dh, &params);
     CHECK_OPENSSL_ERROR(size <= 0);
-    Pparams = PyString_FromStringAndSize((char *) params, size);
+    Pparams = PyBytes_FromStringAndSize((char *) params, size);
     CHECK_PYTHON_ERROR(Pparams == NULL);
 
 error:
@@ -420,7 +439,7 @@ openssl_dh_size(PyObject *self, PyObject *args)
 
     nbytes = DH_size(dh);
     CHECK_OPENSSL_ERROR(nbytes < 0);
-    Presult = PyInt_FromLong(nbytes * 8);
+    Presult = PyLong_FromLong(nbytes * 8);
     CHECK_PYTHON_ERROR(Presult == NULL);
 
 error:
@@ -451,9 +470,9 @@ openssl_dh_genkey(PyObject *self, PyObject *args)
 
     Presult = PyTuple_New(2);
     CHECK_PYTHON_ERROR(Presult == NULL);
-    Pprivkey = PyString_FromStringAndSize((char *) privkey, privlen);
+    Pprivkey = PyBytes_FromStringAndSize((char *) privkey, privlen);
     CHECK_PYTHON_ERROR(Pprivkey == NULL);
-    Ppubkey = PyString_FromStringAndSize((char *) pubkey, publen);
+    Ppubkey = PyBytes_FromStringAndSize((char *) pubkey, publen);
     CHECK_PYTHON_ERROR(Ppubkey == NULL);
     PyTuple_SET_ITEM(Presult, 0, Pprivkey);
     PyTuple_SET_ITEM(Presult, 1, Ppubkey);
@@ -461,8 +480,8 @@ openssl_dh_genkey(PyObject *self, PyObject *args)
 
 error:
     Py_XDECREF(Presult);
-    PyString_ClearFree(Pprivkey);
-    PyString_ClearFree(Ppubkey);
+    PyBytes_ClearFree(Pprivkey);
+    PyBytes_ClearFree(Ppubkey);
 
 cleanup:
     DH_clear_free(dh);
@@ -531,7 +550,7 @@ openssl_dh_compute(PyObject *self, PyObject *args)
         size = seclen;
     }
     CHECK_OPENSSL_ERROR(size <= 0);
-    Presult = PyString_FromStringAndSize((char *) secret, size);
+    Presult = PyBytes_FromStringAndSize((char *) secret, size);
     CHECK_PYTHON_ERROR(Presult == NULL);
 
 error:
@@ -574,7 +593,7 @@ openssl_aes_encrypt(PyObject *self, PyObject *args)
     memcpy(iv2, iv, ivlen);
 
     AES_cbc_encrypt(pad, out, outlen, &key, iv2, 1);
-    Pout = PyString_FromStringAndSize((char *) out, outlen);
+    Pout = PyBytes_FromStringAndSize((char *) out, outlen);
     CHECK_PYTHON_ERROR(Pout == NULL);
 
 error:
@@ -620,7 +639,7 @@ openssl_aes_decrypt(PyObject *self, PyObject *args)
     for (i=0; i<padlen; i++)
         if (out[inlen-1-i] != padlen)
             RETURN_ERROR("invalid padding 2: %s", out);
-    Pout = PyString_FromStringAndSize((char *) out, inlen-padlen);
+    Pout = PyBytes_FromStringAndSize((char *) out, inlen-padlen);
     CHECK_PYTHON_ERROR(Pout == NULL);
 
 error:
@@ -672,7 +691,7 @@ openssl_pbkdf2(PyObject *self, PyObject *args)
 #endif
 
     CHECK_OPENSSL_ERROR(ret != 1);
-    Presult = PyString_FromStringAndSize((char *) out, keylen);
+    Presult = PyBytes_FromStringAndSize((char *) out, keylen);
     CHECK_PYTHON_ERROR(Presult == NULL);
 
 error:
@@ -701,21 +720,21 @@ openssl_random(PyObject *self, PyObject *args)
         buflen = count;
         MALLOC(buf, buflen);
         ret = RAND_bytes((unsigned char *) buf, count);
-        Presult = PyString_FromStringAndSize(buf, count);
+        Presult = PyBytes_FromStringAndSize(buf, count);
         CHECK_PYTHON_ERROR(Presult == NULL);
-    } else if (PyString_Check(alphabet)) {
+    } else if (PyBytes_Check(alphabet)) {
         buflen = count;
         MALLOC(buf, buflen);
         buf2len = sizeof(unsigned int);
         MALLOC(buf2, buf2len);
-        ptr = PyString_AS_STRING(alphabet);
-        nitems = (int) PyString_GET_SIZE(alphabet);
+        ptr = PyBytes_AS_STRING(alphabet);
+        nitems = (int) PyBytes_GET_SIZE(alphabet);
         for (i=0; i<count; i++) {
             ret = RAND_bytes((unsigned char *) buf2, buf2len);
             CHECK_OPENSSL_ERROR(ret != 1);
             buf[i] = ptr[*((unsigned int *) buf2) % nitems];
         }
-        Presult = PyString_FromStringAndSize(buf, buflen);
+        Presult = PyBytes_FromStringAndSize(buf, buflen);
         CHECK_PYTHON_ERROR(Presult == NULL);
     } else if (PyUnicode_Check(alphabet)) {
         buflen = count * (int) sizeof(Py_UNICODE);
@@ -733,9 +752,9 @@ openssl_random(PyObject *self, PyObject *args)
         Presult = PyUnicode_FromUnicode((Py_UNICODE *) buf, count);
         CHECK_PYTHON_ERROR(Presult == NULL);
     } else if (PySequence_Check(alphabet) && PySequence_Size(alphabet) > 0 &&
-               PyString_Check(PySequence_GetItem(alphabet, 0))) {
+               PyBytes_Check(PySequence_GetItem(alphabet, 0))) {
         if (!(separator == NULL || separator == Py_None) &&
-                    !PyString_Check(separator))
+                    !PyBytes_Check(separator))
             RETURN_ERROR("separator must be string");
         buflen = count;
         MALLOC(buf, buflen);
@@ -746,18 +765,18 @@ openssl_random(PyObject *self, PyObject *args)
             seplen = 0;
             sepptr = NULL;
         } else { 
-            seplen = (int) PyString_GET_SIZE(separator);
-            sepptr = PyString_AS_STRING(separator);
+            seplen = (int) PyBytes_GET_SIZE(separator);
+            sepptr = PyBytes_AS_STRING(separator);
         }
         for (i=0,offset=0; i<count; i++) {
             ret = RAND_bytes((unsigned char *) buf2, buf2len);
             CHECK_OPENSSL_ERROR(ret != 1);
             item = PySequence_GetItem(alphabet,
                         *((unsigned int *) buf2) % nitems);
-            if (!PyString_Check(item))
+            if (!PyBytes_Check(item))
                 RETURN_ERROR("all items in the alphabet must be strings");
-            ptr = PyString_AS_STRING(item);
-            size = (int) PyString_GET_SIZE(item);
+            ptr = PyBytes_AS_STRING(item);
+            size = (int) PyBytes_GET_SIZE(item);
             while (offset + size + seplen > buflen)
                 REALLOC(buf, buflen);
             memcpy(buf+offset, ptr, size);
@@ -767,7 +786,7 @@ openssl_random(PyObject *self, PyObject *args)
                 offset += seplen;
             }
         }
-        Presult = PyString_FromStringAndSize(buf, offset);
+        Presult = PyBytes_FromStringAndSize(buf, offset);
         CHECK_PYTHON_ERROR(Presult == NULL);
     } else if (PySequence_Check(alphabet) && PySequence_Size(alphabet) > 0 &&
                PyUnicode_Check(PySequence_GetItem(alphabet, 0))) {
@@ -912,21 +931,26 @@ static PyMethodDef openssl_methods[] =
     { NULL, NULL }
 };
 
+PyDoc_STRVAR(openssl_doc, "wrapped OpenSSL methods");
 
-void initopenssl(void)
+
+MOD_INITFUNC(openssl)
 {
     PyObject *Pmodule, *Pdict;
 
     /* Import _ssl from the standard library so that it will initialize
      * the OpenSSL library for us. */
     if (!PyImport_ImportModule("_ssl"))
-        return;
-    if ((Pmodule = Py_InitModule("openssl", openssl_methods)) == NULL)
-        return;
+        return MOD_ERROR;
+
+    INIT_MODULE(Pmodule, "openssl", openssl_doc, openssl_methods);
+
     if ((Pdict = PyModule_GetDict(Pmodule)) == NULL)
-        return;
+        return MOD_ERROR;
     if ((openssl_Error = PyErr_NewException("openssl.Error", NULL, NULL)) == NULL)
-        return;
+        return MOD_ERROR;
     if (PyDict_SetItemString(Pdict, "Error", openssl_Error) == -1)
-        return;
+        return MOD_ERROR;
+
+    return MOD_OK(Pmodule);
 }

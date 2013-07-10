@@ -18,7 +18,6 @@ from gevent.hub import get_hub, Waiter
 from gevent.server import StreamServer
 
 from bluepass.error import StructuredError
-from bluepass.crypto import CryptoProvider
 from bluepass.platform import errno
 from bluepass.util import base64, json, logging
 
@@ -107,7 +106,6 @@ class MessageBusConnectionBase(object):
         logger = logging.getLogger('bluepass.messagebus')
         context = 'connection %s:%s' % (self.name, self.peer_name)
         self.logger = logging.ContextLogger(logger, context)
-        self.crypto = CryptoProvider()
         self.loop = self.Loop()
         self.method_calls = {}
         self._read_event = self.loop.create_watch(socket, self.loop.READ,
@@ -182,11 +180,11 @@ class MessageBusConnectionBase(object):
                 logger.error('recv() returned error: %s', str(e))
                 self.close()
                 break
-            if buf == '':
+            if buf == b'':
                 logger.error('peer disconnected')
                 self.close()
                 break
-            self._inbuf += buf
+            self._inbuf += buf.decode('ascii')
         if self._incoming:
             self.loop.create_callback(self.dispatch)
 
@@ -199,7 +197,7 @@ class MessageBusConnectionBase(object):
                     break
                 if self.tracefile is not None:
                     self._do_trace(self._outgoing[0], False)
-                self._outbuf = self._outgoing.pop(0)
+                self._outbuf = self._outgoing.pop(0).encode('ascii')
             try:
                 nbytes = self.socket.send(self._outbuf)
             except socket.error as e:
@@ -428,7 +426,7 @@ def method(**kwargs):
     def decorate(func):
         func.method = True
         func.name = func.__name__
-        for key,value in kwargs.iteritems():
+        for key,value in kwargs.items():
             setattr(func, key, value)
         return func
     return decorate

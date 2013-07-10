@@ -88,7 +88,7 @@ class LockError(Exception):
 def lock_file(lockname):
     """Create a lock file `lockname`."""
     try:
-        fd = os.open(lockname, os.O_RDWR|os.O_CREAT, 0644)
+        fd = os.open(lockname, os.O_RDWR|os.O_CREAT, 0o644)
         try:
             fcntl.lockf(fd, fcntl.LOCK_EX|fcntl.LOCK_NB)
         except IOError as e:

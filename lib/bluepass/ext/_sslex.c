@@ -35,6 +35,27 @@ static PyObject *sslex_Error = NULL;
     CHECK_ERROR(cond, ERR_error_string(ERR_get_error(), NULL))
 
 
+#if PY_MAJOR_VERSION >= 3
+#  define MOD_OK(val) (val)
+#  define MOD_ERROR NULL
+#  define MOD_INITFUNC(name) PyMODINIT_FUNC PyInit_ ## name(void)
+#  define INIT_MODULE(mod, name, doc, methods) \
+        do { \
+            static struct PyModuleDef moduledef = { \
+                PyModuleDef_HEAD_INIT, name, doc, -1, methods, }; \
+            mod = PyModule_Create(&moduledef); \
+        } while (0)
+#else
+#  define MOD_OK(value)
+#  define MOD_ERROR
+#  define MOD_INITFUNC(name) void init ## name(void)
+#  define INIT_MODULE(mod, name, doc, methods) \
+          do { mod = Py_InitModule3(name, methods, doc); } while (0)
+#endif
+
+
+#if PY_MAJOR_VERSION < 3
+
 /* 
  * Define a shadow structure that has the same layout as PySSLObject from
  * the _ssl module. This allows us to compile this module separately from
@@ -162,8 +183,16 @@ error:
     return Pret;
 }
 
+#else
+
+/* Py3K: This module is an empty module on Python3. All required
+ * methods are part of the ssl module already. */
+
+#endif
+
 static PyMethodDef sslex_methods[] =
 {
+#if PY_MAJOR_VERSION < 3
     { "set_ciphers",
             (PyCFunction) sslex_set_ciphers, METH_VARARGS },
     { "get_channel_binding",
@@ -172,11 +201,14 @@ static PyMethodDef sslex_methods[] =
             (PyCFunction) sslex_set_dh_params, METH_VARARGS },
     { "_set_accept_state",
             (PyCFunction) sslex__set_accept_state, METH_VARARGS },
+#endif
     { NULL, NULL }
 };
 
+PyDoc_STRVAR(sslex_doc, "Backports of Py3K ssl methods");
 
-void init_sslex(void)
+
+MOD_INITFUNC(_sslex)
 {
     PyObject *Pmodule, *Pdict;
 
@@ -185,12 +217,14 @@ void init_sslex(void)
     SSL_library_init();
      */
 
-    if ((Pmodule = Py_InitModule("_sslex", sslex_methods)) == NULL)
-        return;
+    INIT_MODULE(Pmodule, "_sslex", sslex_doc, sslex_methods);
+
     if ((Pdict = PyModule_GetDict(Pmodule)) == NULL)
-        return;
+        return MOD_ERROR;
     if ((sslex_Error = PyErr_NewException("_sslex.Error", NULL, NULL)) == NULL)
-        return;
+        return MOD_ERROR;
     if (PyDict_SetItemString(Pdict, "Error", sslex_Error) == -1)
-        return;
+        return MOD_ERROR;
+
+    return MOD_OK(Pmodule);
 }

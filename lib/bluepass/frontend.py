@@ -8,6 +8,7 @@
 
 import os
 import logging
+import binascii
 
 from bluepass import platform
 
@@ -26,7 +27,7 @@ class Frontend(object):
             self.data_dir = platform.get_appdir('bluepass')
         self.auth_token = os.environ.get('BLUEPASS_AUTH_TOKEN')
         if self.auth_token is None:
-            self.auth_token = os.urandom(16).encode('hex')
+            self.auth_token = binascii.hexlify(os.urandom(16))
         self.options['auth_token'] = self.auth_token
         self.logger = logging.getLogger('bluepass.frontend')
 

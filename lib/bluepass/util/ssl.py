@@ -6,7 +6,11 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
-import httplib
+try:
+    import httplib
+except ImportError:
+    from http import client as httplib
+
 from gevent import socket, ssl
 from bluepass.ext import _sslex
 

@@ -6,6 +6,8 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
+from __future__ import absolute_import, print_function
+
 from bluepass.messagebus import *
 
 from PyQt4.QtCore import (QEvent, QObject, QSocketNotifier, QTimer,

@@ -12,6 +12,7 @@ import time
 import math
 import hashlib
 import logging
+import base64
 
 from bluepass.ext import openssl
 
@@ -20,23 +21,23 @@ CryptoError = openssl.Error
 # Some useful commonly used DH parameters.
 dhparams = \
 {
-    'skip2048': """
+    'skip2048': base64.b64decode(b"""
     MIIBCAKCAQEA9kJXtwh/CBdyorrWqULzBej5UxE5T7bxbrlLOCDaAadWoxTpj0BV
     89AHxstDqZSt90xkhkn4DIO9ZekX1KHTUPj1WV/cdlJPPT2N286Z4VeSWc39uK50
     T8X8dryDxUcwYc58yWb/Ffm7/ZFexwGq01uejaClcjrUGvC/RgBYK+X0iP1YTknb
     zSC0neSRBzZrM2w4DUUdD3yIsxx8Wy2O9vPJI8BD8KVbGI2Ou1WMuF040zT9fBdX
     Q6MdGGzeMyEstSr/POGxKUAYEY18hKcKctaGxAMZyAcpesqVDNmWn6vQClCbAkbT
     CD1mpF1Bn5x8vYlLIhkmuquiXsNV6TILOwIBAg==
-    """.decode('base64'),
-    'ietf768': """
+    """),
+    'ietf768': base64.b64decode(b"""
     MGYCYQD//////////8kP2qIhaMI0xMZii4DcHNEpAk4IimfMdAILvqY7E5siUUoIeY40BN3vlRmz
     zTpDGzArCm3yXxQ3T+E1bW1RwkXkhbV2Yl5+xvRMQummOjYg//////////8CAQI=
-    """.decode('base64'),
-    'ietf1024': """
+    """),
+    'ietf1024': base64.b64decode(b"""
     MIGHAoGBAP//////////yQ/aoiFowjTExmKLgNwc0SkCTgiKZ8x0Agu+pjsTmyJRSgh5jjQE3e+V
     GbPNOkMbMCsKbfJfFDdP4TVtbVHCReSFtXZiXn7G9ExC6aY37WsL/1y29Aa37e44a/taiZ+lrp8k
     EXxLH+ZJKGZR7OZTgf//////////AgEC
-    """.decode('base64')
+    """)
 }
 
 

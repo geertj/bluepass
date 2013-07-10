@@ -6,6 +6,8 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
+from __future__ import absolute_import, print_function
+
 import math
 import logging
 from string import Template
@@ -16,8 +18,7 @@ from PyQt4.QtGui import (QScrollArea, QWidget, QLabel, QVBoxLayout, QPixmap,
         QApplication, QTabBar, QSizePolicy, QCheckBox, QStackedWidget,
         QGridLayout, QMenu, QKeySequence)
 
-from bluepass.ext import secmem
-from bluepass.crypto import CryptoProvider
+#from bluepass.ext import secmem
 from bluepass.platform.qt.util import iconpath, SortedList
 from bluepass.platform.qt.messagebus import MessageBusError
 from bluepass.platform.qt.dialogs import EditPasswordDialog, AddGroupDialog
@@ -802,7 +803,8 @@ class PasswordView(QWidget):
         self.stack.setCurrentWidget(unlocker)
         for version in self.versions[uuid].itervalues():
             for key in version:
-                secmem.wipe(version[key])
+                pass
+                #secmem.wipe(version[key])
         del self.versions[uuid]
         del self.version_order[uuid]
         del self.current_item[uuid]
