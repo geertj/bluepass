@@ -7,11 +7,10 @@
 # licensing terms.
 
 import os
-from nose import SkipTest
 
+from .unit import UnitTest, SkipTest
 from bluepass.factory import create
 from bluepass.keyring import Keyring, KeyringError
-from bluepass.test.unit import UnitTest
 
 
 class TestKeyring(UnitTest):

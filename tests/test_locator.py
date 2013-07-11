@@ -6,16 +6,17 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
+from __future__ import absolute_import, print_function
+
 import time
 import gevent
 import socket
-from nose import SkipTest
 
+from .unit import UnitTest, SkipTest
 from bluepass import platform
 from bluepass.crypto import CryptoProvider
 from bluepass.locator import *
 from bluepass.factory import singleton
-from bluepass.test.unit import UnitTest
 
 
 class TestLocator(UnitTest):

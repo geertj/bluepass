@@ -6,15 +6,18 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
+from __future__ import absolute_import, print_function
+
 import os
 import time
 import socket
 import signal
 
 from gevent import core
+from .unit import UnitTest, assert_raises
+
 from bluepass.factory import create
 from bluepass.database import DatabaseError
-from bluepass.test.unit import UnitTest, assert_raises
 from bluepass.backend import Backend, BackendController
 from bluepass.messagebus import MessageBusConnection, MessageBusError
 from bluepass.util import misc as util
@@ -89,7 +92,7 @@ class TestBackend(UnitTest):
         for i in range(ncalls):
             conn.call_method('get_config')
         end = time.time()
-        print 'speed: %.2f calls/sec' % (1.0 * ncalls / (end - start))
+        print('speed: %.2f calls/sec' % (1.0 * ncalls / (end - start)))
 
     def test_generate_password(self):
         conn = self.connection

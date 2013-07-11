@@ -6,10 +6,12 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
+from __future__ import absolute_import, print_function
+
 import os
 import sys
 
-from bluepass.test.unit import UnitTest, assert_raises
+from ..unit import UnitTest, assert_raises
 from bluepass.platform import lock_file, unlock_file, LockError
 
 

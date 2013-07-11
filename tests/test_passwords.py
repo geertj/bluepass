@@ -6,7 +6,9 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
-from bluepass.test.unit import UnitTest
+from __future__ import absolute_import, print_function
+
+from .unit import UnitTest
 from bluepass.passwords import *
 
 
@@ -46,5 +48,5 @@ class TestPasswordGenerator(UnitTest):
         pw = gen.generate('diceware', 6)
         assert isinstance(pw, str)
         assert len(pw) >= 11
-        print pw
+        print(pw)
         assert pw.count(' ') == 5

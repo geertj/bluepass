@@ -6,12 +6,14 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
+from __future__ import absolute_import, print_function
+
 import time
 
 from gevent import socket
 from gevent.event import Event
 
-from bluepass.test.unit import UnitTest
+from .unit import UnitTest
 from bluepass.factory import create, instance
 from bluepass.database import Database
 from bluepass.model import Model

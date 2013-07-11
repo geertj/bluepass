@@ -6,15 +6,17 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
+from __future__ import absolute_import, print_function
+
 import os
 import gevent
 from gevent import socket
 import subprocess
 from subprocess import PIPE
 
+from ..unit import UnitTest
 from bluepass import crypto
 from bluepass.util.ssl import SSLSocket
-from bluepass.test.unit import UnitTest
 
 
 class TestSSL(UnitTest):

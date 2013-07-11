@@ -6,13 +6,16 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
+from __future__ import absolute_import, print_function
+
 import os
 import random
 
 import gevent
 from gevent import socket
+
+from .unit import UnitTest, assert_raises
 from bluepass.messagebus import *
-from bluepass.test.unit import UnitTest, assert_raises
 
 
 class ServerHandler(MessageBusHandler):

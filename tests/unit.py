@@ -6,9 +6,13 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
+from __future__ import absolute_import, print_function
+
 import os
 import shutil
 import tempfile
+
+from nose import SkipTest
 
 
 def assert_raises(exc, func, *args):

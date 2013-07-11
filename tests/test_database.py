@@ -6,8 +6,10 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
+from __future__ import absolute_import, print_function
+
+from .unit import UnitTest
 from bluepass.database import Database
-from bluepass.test.unit import UnitTest
 
 
 class TestDatabase(UnitTest):

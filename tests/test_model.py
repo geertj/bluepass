@@ -6,11 +6,13 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
+from __future__ import absolute_import, print_function
+
 import time
 import socket
 import logging
 
-from bluepass.test.unit import UnitTest, assert_raises
+from .unit import UnitTest, assert_raises
 from bluepass.database import *
 from bluepass.model import *
 

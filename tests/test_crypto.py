@@ -6,15 +6,14 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
+from __future__ import absolute_import, print_function
+
 import os
 import sys
 from subprocess import Popen, PIPE
 
+from .unit import UnitTest, assert_raises, SkipTest
 from bluepass.crypto import CryptoProvider, CryptoError, dhparams
-from bluepass.test.unit import UnitTest
-
-from nose import SkipTest
-from nose.tools import assert_raises
 
 
 class CryptoTest(UnitTest):

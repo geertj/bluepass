@@ -42,7 +42,7 @@ version_info = {
 
 def update_version():
     """Update the _version.py file."""
-    fname = os.path.join('.', 'lib', 'bluepass', '_version.py')
+    fname = os.path.join('.', 'bluepass', '_version.py')
     try:
         with open(fname) as fin:
             current = fin.read()
@@ -76,7 +76,7 @@ def update_manifest():
                            stdout=subprocess.PIPE)
     stdout, _ = cmd.communicate()
     files = stdout.splitlines()
-    files.append('lib/bluepass/_version.py')
+    files.append('bluepass/_version.py')
     lines = ['include {0}\n'.format(fname) for fname in files]
     new = ''.join(sorted(lines))
     try:
@@ -93,7 +93,7 @@ def update_manifest():
     print('Updated MANIFEST.in')
     # Remove the SOURCES.txt that setuptools maintains. It appears not to
     # accurately regenerate it when MANIFEST.in changes.
-    sourcestxt = os.path.join('lib', 'bluepass.egg-info', 'SOURCES.txt')
+    sourcestxt = os.path.join('bluepass.egg-info', 'SOURCES.txt')
     if not os.access(sourcestxt, os.R_OK):
         return
     os.unlink(sourcestxt)
@@ -110,17 +110,16 @@ def main():
         # Silence warnings about our RETURN_ERROR macro
         extargs['extra_compile_args'] = ['-Wno-format']
     setup(
-        package_dir = {'': 'lib'},
-        packages = ['bluepass', 'bluepass.ext', 'bluepass.util', 'bluepass.test',
+        packages = ['bluepass', 'bluepass.ext', 'bluepass.util', 'bluepass',
                     'bluepass.platform', 'bluepass.platform.posix',
                     'bluepass.platform.linux', 'bluepass.platform.qt',
                     'bluepass.platform.freedesktop'],
         ext_modules = [
-            Extension('bluepass.ext.openssl', ['lib/bluepass/ext/openssl.c'],
+            Extension('bluepass.ext.openssl', ['bluepass/ext/openssl.c'],
                       libraries=['ssl', 'crypto'], **extargs),
-            Extension('bluepass.ext.secmem', ['lib/bluepass/ext/secmem.c'],
+            Extension('bluepass.ext.secmem', ['bluepass/ext/secmem.c'],
                       **extargs),
-            Extension('bluepass.ext._sslex', ['lib/bluepass/ext/_sslex.c'],
+            Extension('bluepass.ext._sslex', ['bluepass/ext/_sslex.c'],
                       libraries=['ssl', 'crypto'], **extargs)
         ],
         package_data = {'bluepass': ['data/*.asc'],
