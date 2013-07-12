@@ -9,6 +9,7 @@
 from __future__ import absolute_import, print_function
 
 import sys
+from PyQt4.QtCore import QTimer
 from PyQt4.QtGui import QApplication, QIcon, QPixmap
 from bluepass.factory import create, instance
 from bluepass.platform.qt.backend import BackendProxy
@@ -45,3 +46,16 @@ class Bluepass(QApplication):
     def update_config(self, config):
         self._config = config
         self.backend().update_config(config)
+
+    def copyToClipboard(self, text, timeout=None):
+        clipboard = self.clipboard()
+        clipboard.setText(text)
+        if timeout is None:
+            return
+        def clearClipboard():
+            # There is a small race condition here where we could clear
+            # somebody else's contents but there's nothing we can do about it.
+            if not clipboard.ownsClipboard() or clipboard.text != password:
+                return
+            clipboard.clear()
+        QTimer.singleShot(timeout*1000, clearClipboard)

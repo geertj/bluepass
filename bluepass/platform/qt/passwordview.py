@@ -12,28 +12,22 @@ import math
 import logging
 from string import Template
 
-from PyQt4.QtCore import Slot, Signal, Property, Qt, QTimer
+from PyQt4.QtCore import Slot, Signal, Property, Qt
 from PyQt4.QtGui import (QScrollArea, QWidget, QLabel, QVBoxLayout, QPixmap,
         QHBoxLayout, QVBoxLayout, QPushButton, QLineEdit, QFrame, QIcon,
         QApplication, QTabBar, QSizePolicy, QCheckBox, QStackedWidget,
         QGridLayout, QMenu, QKeySequence)
 
-#from bluepass.ext import secmem
 from bluepass.platform.qt.util import iconpath, SortedList
 from bluepass.platform.qt.messagebus import MessageBusError
-from bluepass.platform.qt.dialogs import EditPasswordDialog, AddGroupDialog
+from bluepass.platform.qt.dialogs import EditPasswordDialog
 
 
 def sortkey(version):
     """Return a key that established the order of items as they
-    appear in our PasswordView."""
-    if version['_type'] == 'Password':
-        key = '%s\x00%s' % (version.get('group', 'All'),
-                            version.get('name', ''))
-    elif version['_type'] == 'Group':
-        key = version.get('name', '')
-    else:
-        raise ValueError('Unknown version type: %s' % version['_type'])
+    appear in our VaultView."""
+    key = '%s\x00%s' % (version.get('group', ''),
+                        version.get('name', ''))
     return key
 
 
@@ -49,7 +43,7 @@ def searchkey(version):
 class NoVaultWidget(QFrame):
     """No Vault widget.
 
-    This widget is shown in the PasswordView when there are no vaults yet.
+    This widget is shown in the VaultView when there are no vaults yet.
     It offers a brief explanation, and buttons to create a new vault or
     connect to an existing one.
     """
@@ -108,15 +102,15 @@ class NoVaultWidget(QFrame):
         vaultmgr.showPage(page)
 
 
-class UnlockWidget(QFrame):
+class UnlockVaultWidget(QFrame):
     """Unlock widget.
     
-    This widget is displayed in the PasswordView when a vault is locked.
+    This widget is displayed in the VaultView when a vault is locked.
     It allows the user to enter a password to unlock the vault.
     """
 
     def __init__(self, vault, parent=None):
-        super(UnlockWidget, self).__init__(parent)
+        super(UnlockVaultWidget, self).__init__(parent)
         self.vault = vault
         self.addWidgets()
         self.loadConfig()
@@ -160,7 +154,7 @@ class UnlockWidget(QFrame):
     def loadConfig(self):
         config = QApplication.instance().config()
         checked = config.get('Frontend', {}).get('Qt', {}). \
-                get('UnlockWidget', {}).get('unlock_others', 0)
+                get('UnlockVaultWidget', {}).get('unlock_others', 0)
         self.unlockcb.setChecked(checked)
 
     @Slot()
@@ -168,7 +162,7 @@ class UnlockWidget(QFrame):
         qapp = QApplication.instance()
         config = qapp.config()
         section = config.setdefault('Frontend', {}).setdefault('Qt', {}). \
-                setdefault('UnlockWidget', {})
+                setdefault('UnlockVaultWidget', {})
         unlock_others = self.unlockcb.isChecked()
         section['unlock_others'] = unlock_others
         qapp.update_config(config)
@@ -231,7 +225,7 @@ class UnlockWidget(QFrame):
 class NoItemWidget(QFrame):
     """No item widget.
 
-    This widget is shown in the PasswordView when a vault has no items yet.
+    This widget is shown in the VaultView when a vault has no items yet.
     It shows a small description and a button to create the first item.
     """
 
@@ -256,10 +250,15 @@ class GroupItem(QLabel):
     """A group heading in a list of items."""
 
     def __init__(self, vault, name, parent=None):
-        super(GroupItem, self).__init__(name, parent)
+        super(GroupItem, self).__init__(parent)
         self.vault = vault
         self.name = name
+        self.displayName = name or 'No Group'
         self.opened = True
+        self.addWidgets()
+        self.setText(self.displayName)
+
+    def addWidgets(self):
         opener = QLabel(self)
         self.pixmap_open = QPixmap(iconpath('triangle-open.png'))
         self.pixmap_closed = QPixmap(iconpath('triangle-closed.png'))
@@ -274,9 +273,9 @@ class GroupItem(QLabel):
     @Slot(int)
     def setMatchCount(self, nmatches):
         if nmatches == -1:
-            self.setText(self.name)
+            self.setText(self.displayName)
         else:
-            self.setText('%s (%d)' % (self.name, nmatches))
+            self.setText('%s (%d)' % (self.displayName, nmatches))
 
     def resizeEvent(self, event):
         size = self.height()
@@ -332,25 +331,12 @@ class PasswordItem(QLabel):
     @Slot()
     def copyUsernameToClipboard(self):
         username = self.version.get('username', '')
-        clipboard = QApplication.instance().clipboard()
-        clipboard.setText(username)
+        QApplication.instance().copyToClipboard(username)
 
     @Slot()
     def copyPasswordToClipboard(self):
-        backend = QApplication.instance().backend()
         password = self.version.get('password', '')
-        clipboard = QApplication.instance().clipboard()
-        clipboard.setText(password)
-        # Schedule a callback that will clear the clipboard. We only clear
-        # it if: 1) we own the clipboard, and 2) the contents are what we
-        # put on it.
-        def clearClipboard():
-            # There is a small race condition here where we could clear
-            # somebody else's contents but there's nothing we can do about it.
-            if not clipboard.ownsClipboard() or clipboard.text != password:
-                return
-            clipboard.clear()
-        QTimer.singleShot(60000, clearClipboard)
+        QApplication.instance().copyToClipboard(password, 60)
 
     @Slot()
     def editPassword(self):
@@ -385,15 +371,15 @@ class PasswordItem(QLabel):
     def deleteItem(self):
         backend = QApplication.instance().backend()
         version = { 'id': self.version['id'], 'name': self.version['name'],
-                    '_type': self.version['_type'], 'deleted': True }
+                    '_type': self.version['_type'] }
         backend.delete_version(self.vault, version)
 
 
-class ItemContainer(QScrollArea):
+class VersionList(QScrollArea):
     """A container for passwords and group."""
 
     def __init__(self, parent=None):
-        super(ItemContainer, self).__init__(parent)
+        super(VersionList, self).__init__(parent)
         contents = QFrame(self)
         layout = QVBoxLayout()
         layout.setSpacing(0)
@@ -423,21 +409,21 @@ class ItemContainer(QScrollArea):
         return items
 
 
-class PasswordView(QWidget):
-    """The main "password view" widget.
+class VaultView(QWidget):
+    """The main "vault view" widget.
 
     This widget shows a tabbar and a set of ScrollArea's that show the
     contents of each vault.
 
-    This is an "active" component in the sense that PasswordView makes
+    This is an "active" component in the sense that VaultView makes
     modifications to the model directly based on the user input. It
     accesses the model via the singleton BackendProxy instance at
     QAplication.instance().backend().
     """
 
     stylesheet = """
-        NoVaultWidget, UnlockWidget, NoItemWidget { background-color: white; border: 1px solid grey; }
-        ItemContainer > QWidget > QFrame { background-color: white; border: 1px solid grey; }
+        NoVaultWidget, UnlockVaultWidget, NoItemWidget { background-color: white; border: 1px solid grey; }
+        VersionList > QWidget > QFrame { background-color: white; border: 1px solid grey; }
         QTabBar { font: normal ${smaller}pt; }
         GroupItem { margin: 0; padding: 0; border: 0; background:
                 qlineargradient(x1:0, y1:0, x2:0, y2:1, stop: 0 #ddd, stop: 1 #aaa) }
@@ -446,7 +432,7 @@ class PasswordView(QWidget):
 
     def __init__(self, parent=None):
         """Create a new password view."""
-        super(PasswordView, self).__init__(parent)
+        super(VaultView, self).__init__(parent)
         self.vaults = {}
         self.vault_order = SortedList()
         self.current_vault = None
@@ -456,8 +442,10 @@ class PasswordView(QWidget):
         self.logger = logging.getLogger(__name__)
         self.addWidgets()
         self.setStyleSheet(self.stylesheet)
-        self.editpwdlg = EditPasswordDialog()
-        self.addgrpdlg = AddGroupDialog()
+        editpwdlg = EditPasswordDialog()
+        self.groupAdded.connect(editpwdlg.addGroup)
+        self.groupRemoved.connect(editpwdlg.removeGroup)
+        self.editpwdlg = editpwdlg
         backend = QApplication.instance().backend()
         backend.VaultAdded.connect(self.updateVault)
         backend.VaultRemoved.connect(self.updateVault)
@@ -492,7 +480,7 @@ class PasswordView(QWidget):
         qapp = QApplication.instance()
         subst['smaller'] = int(math.ceil(0.8 * qapp.font().pointSize()))
         stylesheet = Template(stylesheet).substitute(subst)
-        super(PasswordView, self).setStyleSheet(stylesheet)
+        super(VaultView, self).setStyleSheet(stylesheet)
 
     def loadVaults(self):
         """Load all vaults."""
@@ -515,12 +503,12 @@ class PasswordView(QWidget):
                     self.vaults[uuid].get('deleted', False)):
             logger.debug('this is a new vault')
             self.vaults[uuid] = vault
-            unlocker = UnlockWidget(uuid, self.stack)
+            unlocker = UnlockVaultWidget(uuid, self.stack)
             self.vaultCountChanged.connect(unlocker.vaultCountChanged)
             self.stack.addWidget(unlocker)
             noitems = NoItemWidget(uuid, self.stack)
             self.stack.addWidget(noitems)
-            items = ItemContainer(self.stack)
+            items = VersionList(self.stack)
             self.stack.addWidget(items)
             widgets = (unlocker, noitems, items)
             pos = self.vault_order.insert(name, uuid, widgets)
@@ -583,90 +571,81 @@ class PasswordView(QWidget):
         for version in versions:
             vuuid = version['id']
             key = sortkey(version)
-            deleted = version.get('deleted', False)
-            if version['_type'] == 'Password':
-                if not deleted and (vuuid not in current_versions or
-                        vuuid in current_versions and \
-                        current_versions[vuuid].get('deleted', False)):
-                    # new, or deleted -> undeleted
+            present = not version['_envelope'].get('deleted', False)
+            cur_present = vuuid in current_versions
+            cur_deleted = current_versions.get('vuuid', {}) \
+                    .get('_envelope', {}).get('deleted', False)
+            if present:
+                if not cur_present:
                     modifications.append((key, 'new', version))
-                elif not deleted and vuuid in current_versions and \
-                        not current_versions[vuuid].get('deleted', False):
-                    # updated
+                elif cur_present and not cur_deleted:
                     modifications.append((key, 'update', version))
-                elif deleted and vuuid in current_versions and \
-                        not current_versions[vuuid].get('deleted', False):
-                    # deleted
-                    modifications.append((key, 'delete', version))
-            elif version['_type'] == 'Group':
-                if not deleted and (vuuid not in current_versions or \
-                        vuuid in current_versions and \
-                        current_versions[vuuid].get('deleted', False)):
-                    # new, or deleted -> undeleted
-                    modifications.append((key, 'new', version))
-                elif deleted and vuuid in current_versions and \
-                        not current_versions[vuuid].get('deleted', False):
-                    # deleted
+                elif cur_deleted:
+                    modifications.append((key, 'undelete', version))
+            else:
+                if cur_present and not cur_deleted:
                     modifications.append((key, 'delete', version))
         modifications.sort()
         # Now execute the operations on the layout in the order the items
         # will appear on the screen.
         for key,mod,version in modifications:
             vuuid = version['id']
-            if version['_type'] == 'Password':
-                if mod == 'new':
-                    group = version.get('group', 'All')
-                    pos = current_order.find(group)
-                    if pos == -1:
-                        # No group. Don't bail on this just insert one.
-                        item = GroupItem(uuid, group)
-                        item.openStateChanged.connect(self.setGroupOpenState)
-                        pos = current_order.insert(group, None, (item, None))
-                        items.insertItem(pos, item)
-                    item = PasswordItem(uuid, version)
-                    item.clicked.connect(self.changeCurrentItem)
-                    search = searchkey(version)
-                    pos = current_order.insert(key, vuuid, (item, search))
+            curversion = current_versions.get(vuuid)
+            if mod in ('new', 'update'):
+                # Need to insert a new group?
+                group = version.get('group', '')
+                grouppos = current_order.find(group)
+                if grouppos == -1:
+                    item = GroupItem(uuid, group)
+                    item.openStateChanged.connect(self.setGroupOpenState)
+                    pos = current_order.insert(group, None, (item, None))
                     items.insertItem(pos, item)
-                elif mod == 'update':
-                    curkey = sortkey(current_versions[vuuid])
-                    curpos = current_order.find(curkey, vuuid)
-                    assert curpos != -1
-                    item, search = current_order.dataat(curpos)
-                    item.updateData(version)
-                    if key != curkey:
-                        current_order.removeat(curpos)
-                        newpos = current_order.insert(key, vuuid, (item, search))
-                        items.removeItem(item)
-                        items.insertItem(newpos, item)
-                elif mod == 'delete':
-                    curkey = sortkey(current_versions[vuuid])
-                    curpos = current_order.find(curkey, vuuid)
-                    assert curpos != -1
+                    self.groupAdded.emit(uuid, group)
+            if mod == 'new':
+                assert curversion is None
+                pos = current_order.find(key)
+                assert pos == -1
+                item = PasswordItem(uuid, version)
+                item.clicked.connect(self.changeCurrentItem)
+                search = searchkey(version)
+                pos = current_order.insert(key, vuuid, (item, search))
+                items.insertItem(pos, item)
+            elif mod == 'update':
+                assert curversion is not None
+                curkey = sortkey(curversion)
+                curpos = current_order.find(curkey, vuuid)
+                assert curpos != -1
+                item, search = current_order.dataat(curpos)
+                item.updateData(version)
+                if key != curkey:
+                    current_order.removeat(curpos)
+                    newpos = current_order.insert(key, vuuid, (item, search))
+                    items.removeItem(item)
+                    items.insertItem(newpos, item)
+            elif mod == 'delete':
+                assert curversion is not None
+                curkey = sortkey(current_versions[vuuid])
+                curpos = current_order.find(curkey, vuuid)
+                assert curpos != -1
+                item, search = current_order.dataat(curpos)
+                current_order.removeat(curpos)
+                items.removeItem(item)
+                item.hide(); item.destroy()
+                if self.current_item[uuid] == vuuid:
+                    self.current_item[uuid] = None
+            if mod in ('update', 'delete'):
+                # Was this the last element in a group?
+                curgroup = curversion.get('group', '')
+                curpos = current_order.find(curgroup)
+                assert curpos != -1
+                prefix = '%s\x00' % curgroup
+                if curpos == len(current_order)-1 or \
+                        not current_order.keyat(curpos+1).startswith(prefix):
                     item, search = current_order.dataat(curpos)
                     current_order.removeat(curpos)
                     items.removeItem(item)
                     item.hide(); item.destroy()
-                    if self.current_item[uuid] == vuuid:
-                        self.current_item[uuid] = None
-            elif version['_type'] == 'Group':
-                if mod == 'new':
-                    pos = current_order.find(key)
-                    if pos == -1:
-                        item = GroupItem(uuid, key)
-                        item.openStateChanged.connect(self.setGroupOpenState)
-                        pos = current_order.insert(key, vuuid, (item, None))
-                        items.insertItem(pos, item)
-                elif mod == 'delete':
-                    pos = current_order.find(key)
-                    # only remove the group if it is empty
-                    prefix = '%s\x00' % key
-                    if pos+1 == len(current_order) or \
-                            not current_order.keyat(pos+1).startswith(prefix):
-                        item, search = current_order.dataat(pos)
-                        current_order.removeat(pos)
-                        items.removeItem(item)
-                        item.destroy()
+                    self.groupRemoved.emit(uuid, group)
         # We can now update the version cache
         for version in versions:
             current_versions[version['id']] = version
@@ -683,6 +662,8 @@ class PasswordView(QWidget):
     vaultCountChanged = Signal(int)
     currentVaultChanged = Signal(str)
     currentVaultItemCountChanged = Signal(int)
+    groupAdded = Signal(str, str)
+    groupRemoved = Signal(str, str)
 
     @Slot(int)
     def changeVault(self, current):
@@ -721,6 +702,20 @@ class PasswordView(QWidget):
         return [ self.vaults[uuid] for uuid in self.vault_order.itervalues()
                  if uuid in self.versions ]
 
+    def selectedVersion(self):
+        """Return the selected version in the current vault, if any."""
+        uuid = self.currentVault()
+        if uuid not in self.vaults:
+            return
+        if uuid not in self.versions:
+            return  # locked
+        assert uuid in self.current_item
+        vuuid = self.current_item[uuid]
+        if not vuuid:
+            return
+        item = self.versions[uuid][vuuid]
+        return item
+
     @Slot(dict)
     def vaultLocked(self, vault):
         """Called when a vault was locked."""
@@ -735,10 +730,6 @@ class PasswordView(QWidget):
             return  # already locked
         unlocker, noitems, items = self.vault_order.dataat(pos)
         self.stack.setCurrentWidget(unlocker)
-        for version in self.versions[uuid].itervalues():
-            for key in version:
-                pass
-                #secmem.wipe(version[key])
         del self.versions[uuid]
         del self.version_order[uuid]
         del self.current_item[uuid]
@@ -871,7 +862,7 @@ class PasswordView(QWidget):
             self.changeCurrentItem(vault, None)
             self.parent().loseFocus()
         else:
-            super(PasswordView, self).keyPressEvent(event)
+            super(VaultView, self).keyPressEvent(event)
 
     def hasCurrentVault(self):
         """Return whether there is a current vault."""
@@ -881,28 +872,16 @@ class PasswordView(QWidget):
         """Return whether the current vault is locked."""
         return self.current_vault not in self.versions
 
-    def hasSelectedItem(self):
-        """Return whether there's a selected item in the current vault."""
-        uuid = self.current_vault
-        if uuid is None:
-            return False  # no vault
-        if uuid not in self.versions:
-            return False  # locked
-        return False
-
     @Slot()
     def newPassword(self):
         """Show a dialog to add a password."""
         vault = self.currentVault()
-        self.editpwdlg.newPassword(vault)
+        current = self.selectedVersion()
+        group = current.get('group') if current else ''
+        version = { '_type': 'Password', 'group': group }
+        self.editpwdlg.editPassword(vault, version)
 
     @Slot(str, dict)
     def editPassword(self, vault, version):
         """Show a dialog to edit a password."""
         self.editpwdlg.editPassword(vault, version)
-
-    @Slot()
-    def newGroup(self):
-        """Show a dialog to add a new group."""
-        vault = self.currentVault()
-        self.addgrpdlg.newGroup(vault)

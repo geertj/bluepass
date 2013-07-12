@@ -52,7 +52,7 @@ class SortedList(object):
             return -1
         return pos
 
-    def insert(self, key, value, data=None):
+    def insert(self, key, value=None, data=None):
         """Insert the key/value pair. Return the position where the pair was
         inserted."""
         pos = bisect.bisect_right(self._keys, key)
@@ -74,7 +74,7 @@ class SortedList(object):
         if self._keys[pos] != key:
             return -1
         del self._keys[pos]
-        del self._items[pos]
+        del self._values[pos]
         del self._data[pos]
 
     def removeat(self, pos):

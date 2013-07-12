@@ -15,7 +15,7 @@ from PyQt4.QtGui import (QLabel, QLineEdit, QIcon, QPixmap, QPushButton,
 
 from bluepass.platform.qt.util import iconpath
 from bluepass.platform.qt.dialogs import PairingApprovalDialog
-from bluepass.platform.qt.passwordview import PasswordView
+from bluepass.platform.qt.passwordview import VaultView
 from bluepass.platform.qt.vaultmanager import VaultManager
 from bluepass.platform.qt.messagebus import MessageBusError
 
@@ -91,17 +91,6 @@ class MenuButton(QPushButton):
 
     def buildMenu(self):
         menu = QMenu(self)
-        copyuser = QAction('Copy Username', menu)
-        copyuser.setShortcut(QKeySequence('CTRL+U'))
-        copyuser.triggered.connect(self.copyUsername)
-        menu.addAction(copyuser)
-        self.copyuser = copyuser
-        copypass = QAction('Copy Password', menu)
-        copypass.setShortcut(QKeySequence('CTRL+C'))
-        copypass.triggered.connect(self.copyPassword)
-        menu.addAction(copypass)
-        self.copypass = copypass
-        menu.addSeparator()
         lockvault = menu.addAction('Lock Vault')
         lockvault.triggered.connect(self.lockVault)
         self.lockvault = lockvault
@@ -119,9 +108,16 @@ class MenuButton(QPushButton):
         additem = menu.addAction('Add Password')
         additem.triggered.connect(self.addPassword)
         self.additem = additem
-        addgroup = menu.addAction('Add Group')
-        addgroup.triggered.connect(self.addGroup)
-        self.addgroup = addgroup
+        copyuser = QAction('Copy Username', menu)
+        copyuser.setShortcut(QKeySequence('CTRL+U'))
+        copyuser.triggered.connect(self.copyUsername)
+        menu.addAction(copyuser)
+        self.copyuser = copyuser
+        copypass = QAction('Copy Password', menu)
+        copypass.setShortcut(QKeySequence('CTRL+C'))
+        copypass.triggered.connect(self.copyPassword)
+        menu.addAction(copypass)
+        self.copypass = copypass
         menu.addSeparator()
         about = menu.addAction('About')
         about.triggered.connect(self.showAbout)
@@ -134,8 +130,19 @@ class MenuButton(QPushButton):
         menu.addAction(quit)
         self.setMenu(menu)
 
-    copyUsername = Signal()
-    copyPassword = Signal()
+    @Slot()
+    def copyUsername(self):
+        qapp = QApplication.instance()
+        version = qapp.mainWindow().passwordView().selectedVersion()
+        username = version.get('username', '')
+        qapp.copyToClipboard(username)
+
+    @Slot()
+    def copyPassword(self):
+        qapp = QApplication.instance()
+        version = qapp.mainWindow().passwordView().selectedVersion()
+        password = version.get('password', '')
+        qapp.copyToClipboard(password, 60)
 
     @Slot()
     def lockVault(self):
@@ -157,11 +164,6 @@ class MenuButton(QPushButton):
     def addPassword(self):
         pwview = QApplication.instance().mainWindow().passwordView()
         pwview.newPassword()
-
-    @Slot()
-    def addGroup(self):
-        pwview = QApplication.instance().mainWindow().passwordView()
-        pwview.newGroup()
 
     @Slot()
     def showVaultManager(self):
@@ -192,13 +194,12 @@ class MenuButton(QPushButton):
     def enableEntries(self):
         qapp = QApplication.instance()
         pwview = qapp.mainWindow().passwordView()
-        hasitem = pwview.hasSelectedItem()
-        self.copyuser.setEnabled(hasitem)
-        self.copypass.setEnabled(hasitem)
+        versionSelected = bool(pwview.selectedVersion())
+        self.copyuser.setEnabled(versionSelected)
+        self.copypass.setEnabled(versionSelected)
         unlocked = not pwview.isCurrentVaultLocked()
         self.lockvault.setEnabled(unlocked)
         self.additem.setEnabled(unlocked)
-        self.addgroup.setEnabled(unlocked)
 
     def enterEvent(self, event):
         self.setFlat(False)
@@ -277,7 +278,7 @@ class MainWindow(QWidget):
         menu = MenuButton(self)
         hbox.addWidget(menu)
         layout.addLayout(hbox)
-        pwview = PasswordView(self)
+        pwview = VaultView(self)
         searchbox.textChanged.connect(pwview.setSearchQuery)
         pwview.currentVaultChanged.connect(searchbox.currentVaultChanged)
         pwview.currentVaultItemCountChanged.connect(searchbox.currentVaultItemCountChanged)

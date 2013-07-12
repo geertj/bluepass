@@ -104,10 +104,3 @@
     'password': 'password',
     'generator': '[abc]',
 }
-
-{
-    '_type': 'Group',
-    'id': 'uuid',
-    'name': 'name'
-    'comment': 'comment'
-}

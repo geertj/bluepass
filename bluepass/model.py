@@ -16,7 +16,6 @@ from bluepass.error import StructuredError
 from bluepass.crypto import CryptoProvider, CryptoError
 from bluepass.util import json, base64
 from bluepass.util.uuid import check_uuid4
-from bluepass.ext import secmem
 from bluepass.util.selfpipe import SelfPipeEvent
 from bluepass import platform
 
@@ -462,7 +461,7 @@ class Model(object):
                 continue
             if vault not in changes:
                 changes[vault] = []
-            changes[vault].append(linear[0]['payload']['version'])
+            changes[vault].append(self._get_version(linear[0]))
         for vault in changes:
             self.raise_event('VersionsAdded', vault, changes[vault])
 
@@ -472,25 +471,8 @@ class Model(object):
             return
         assert vault in self._linear_history
         assert vault in self._full_history
-        for item in self._version_cache[vault].values():
-            version = item['payload']['version']
-            for key in version:
-                if isinstance(version[key], (str, unicode)):
-                    secmem.wipe(version[key])
         self._version_cache[vault].clear()
-        for items in self._linear_history[vault].values():
-            for item in items:
-                version = item['payload']['version']
-                for key in version:
-                    if isinstance(version[key], (str, unicode)):
-                        secmem.wipe(version[key])
         self._linear_history[vault].clear()
-        for items in self._full_history[vault].values():
-            for item in items:
-                version = item['payload']['version']
-                for key in version:
-                    if isinstance(version[key], (str, unicode)):
-                        secmem.wipe(version[key])
         self._full_history[vault].clear()
 
     def _sort_history(self, uuid, items):
@@ -607,7 +589,6 @@ class Model(object):
             pubkey = base64.decode(cert['keys']['encrypt']['key'])
             enckey = crypto.rsa_encrypt(symkey, pubkey, padding='oaep')
             keys[node] = base64.encode(enckey)
-        secmem.wipe(symkey)
 
     def _decrypt_item(self, vault, item):
         """INTERNAL: decrypt an encrypted item."""
@@ -680,13 +661,20 @@ class Model(object):
         payload['version'] = version.copy()
         return item
 
+    def _get_version(self, item):
+        """Return the version inside an item, with envelope."""
+        payload = item['payload'].copy()
+        version = payload['version'].copy()
+        del payload['version']
+        version['_envelope'] = payload
+        return version
+
     def _create_vault_key(self, password):
         """Create a new vault key. Return a tuple (private, public,
         keyinfo). The keyinfo structure contains the encrypted keys."""
         crypto = self.crypto
         keyinfo = {}
         private, public = crypto.rsa_genkey(3072)
-        secmem.lock(private)
         keyinfo['keytype'] = 'rsa'
         keyinfo['public'] = base64.encode(public)
         keyinfo['encinfo'] = encinfo = {}
@@ -718,7 +706,6 @@ class Model(object):
         pwcheck['random'] = base64.encode(random)
         verifier = crypto.hmac(symkey, random, 'sha256')
         pwcheck['verifier'] = base64.encode(verifier)
-        secmem.wipe(symkey)
         return private, public, keyinfo
 
     def _create_vault_keys(self, password):
@@ -969,8 +956,6 @@ class Model(object):
             if check != verifier:
                 raise ModelError('WrongPassword')
             private = crypto.aes_decrypt(privkey, symkey, iv, 'cbc-pkcs7')
-            secmem.wipe(symkey)
-            secmem.lock(private)
             self._private_keys[uuid].append(private)
         self._load_versions(uuid)
         log.debug('unlocked vault "%s" (%s)', uuid, self.vaults[uuid]['name'])
@@ -990,10 +975,6 @@ class Model(object):
         assert uuid in self._private_keys
         if len(self._private_keys[uuid]) == 0:
             return
-        secmem.wipe(self._private_keys[uuid][0])
-        secmem.unlock(self._private_keys[uuid][0])
-        secmem.wipe(self._private_keys[uuid][1])
-        secmem.unlock(self._private_keys[uuid][1])
         self._private_keys[uuid] = []
         self._clear_version_cache(uuid)
         log.debug('locked vault "%s" (%s)', uuid, self.vaults[uuid]['name'])
@@ -1019,9 +1000,8 @@ class Model(object):
         if self.vault_is_locked(vault):
             raise ModelError('Locked', 'Vault is locked')
         assert vault in self._version_cache
-        version = self._version_cache[vault].get(uuid)
-        if version:
-            version = version['payload']['version'].copy()
+        item = self._version_cache[vault].get(uuid)
+        version = self._get_version(item) if item else None
         return version
 
     def get_versions(self, vault):
@@ -1033,8 +1013,10 @@ class Model(object):
         if self.vault_is_locked(vault):
             raise ModelError('Locked', 'Vault is locked')
         assert vault in self._version_cache
-        versions = [ item['payload']['version'].copy()
-                     for item in self._version_cache[vault].values() ]
+        versions = []
+        for item in self._version_cache[vault].values():
+            version = self._get_version(item)
+            versions.append(version)
         return versions
 
     def add_version(self, vault, version):
@@ -1053,6 +1035,7 @@ class Model(object):
         self._add_origin(vault, item)
         self._sign_item(vault, item)
         self.import_item(vault, item)
+        version = self._get_version(item)
         return version
 
     def update_version(self, vault, version):
@@ -1077,6 +1060,8 @@ class Model(object):
         self._add_origin(vault, item)
         self._sign_item(vault, item)
         self.import_item(vault, item)
+        version = self._get_version(item)
+        return version
 
     def delete_version(self, vault, version):
         """Delete a version."""
@@ -1101,6 +1086,8 @@ class Model(object):
         self._add_origin(vault, item)
         self._sign_item(vault, item)
         self.import_item(vault, item)
+        version = self._get_version(item)
+        return version
 
     def get_version_history(self, vault, uuid):
         """Return the history for version `uuid`."""
@@ -1115,7 +1102,7 @@ class Model(object):
         assert vault in self._linear_history
         if uuid not in self._linear_history[vault]:
             raise ModelError('NotFound', 'Version not found')
-        history = [ item['payload']['version']
+        history = [ self._get_version(item)
                     for item in self._linear_history[vault][uuid] ]
         return history
 
