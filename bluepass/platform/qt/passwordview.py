@@ -296,108 +296,38 @@ class GroupItem(QLabel):
         self.openStateChanged.emit(self.vault, self.name, self.opened)
 
 
-class PasswordItem(QWidget):
+class PasswordItem(QLabel):
 
     stylesheet = """
-        PasswordItem[selected="false"] QLabel#header 
+        PasswordItem[selected="false"]
                 { color: palette(window-text); background-color: white; }
-        PasswordItem[selected="true"] QLabel#header
+        PasswordItem[selected="true"]
                 { color: palette(highlighted-text); background-color: palette(highlight); }
-        #separator { color: #aaa; }
         QLabel { height: 18px; }
-        QLineEdit { height: 20px; }
-        QPushButton { font: normal 10px; height: 18px; }
     """
-        
+
     def __init__(self, vault, version, parent=None):
         super(PasswordItem, self).__init__(parent)
         self.vault = vault
         self._selected = False
-        self.addWidgets()
-        self.setPreviewMode(False)
         self.updateData(version)
-
-    def addWidgets(self):
-        layout = QVBoxLayout()
-        self.setLayout(layout)
-        layout.setContentsMargins(0, 0, 0, 0)
-        header = QLabel(self)
-        header.setObjectName('header')
-        header.setMargin(2)
-        layout.addWidget(header)
-        self.header = header
-        detail = QFrame(self)
-        self.detail = detail
-        layout.addWidget(detail)
-        vbox = QVBoxLayout()
-        detail.setLayout(vbox)
-        vbox.setContentsMargins(10, 2, 10, 2)
-        grid = QGridLayout()
-        grid.setColumnMinimumWidth(1, 10)
-        vbox.addLayout(grid)
-        label = QLabel('Username', detail)
-        grid.addWidget(label, 0, 0)
-        username = QLineEdit(detail)
-        username.setReadOnly(True)
-        grid.addWidget(username, 0, 2, 1, 2)
-        self.username = username
-        label = QLabel('Password', detail)
-        grid.addWidget(label, 1, 0)
-        password = QLineEdit(detail)
-        password.setReadOnly(True)
-        password.setEchoMode(QLineEdit.Password)
-        grid.addWidget(password, 1, 2)
-        self.password = password
-        icon = QIcon(QPixmap(iconpath('eye.png')))
-        button = QPushButton(icon, '', detail)
-        button.setCheckable(True)
-        button.toggled.connect(self.setShowPassword)
-        grid.addWidget(button, 1, 3)
-        hbox = QHBoxLayout()
-        vbox.addLayout(hbox)
-        hbox.setContentsMargins(0, 0, 0, 0)
-        button = QPushButton('Copy User', detail)
-        button.clicked.connect(self.copyUsernameToClipboard)
-        hbox.addWidget(button)
-        button = QPushButton('Copy Pwd', detail)
-        button.clicked.connect(self.copyPasswordToClipboard)
-        hbox.addWidget(button)
-        button = QPushButton('Open / Edit', detail)
-        button.clicked.connect(self.editPassword)
-        hbox.addWidget(button)
-        frame = QFrame(detail)
-        frame.setObjectName('separator')
-        frame.setFrameShape(QFrame.HLine)
-        vbox.addWidget(frame)
 
     def getSelected(self):
         return self._selected
 
     def setSelected(self, selected):
         self._selected = selected
+        # Re-calculate style
+        self.setStyleSheet(self.stylesheet)
 
     selected = Property(bool, getSelected, setSelected)
 
     clicked = Signal(str, str)
 
-    @Slot()
+    @Slot(dict)
     def updateData(self, version):
         self.version = version
-        self.header.setText(version.get('name', ''))
-        self.username.setText(version.get('username', ''))
-        self.password.setText(version.get('password', ''))
-
-    @Slot(bool)
-    def setPreviewMode(self, enabled):
-        self.setSelected(enabled)
-        self.detail.setVisible(enabled)
-        # Force a recalculation based on the new value of the "selected" property.
-        self.setStyleSheet(self.stylesheet)
-
-    @Slot(bool)
-    def setShowPassword(self, show):
-        self.password.setEchoMode(QLineEdit.Normal if show
-                                  else QLineEdit.Password)
+        self.setText(version.get('name', ''))
 
     @Slot()
     def copyUsernameToClipboard(self):
@@ -433,6 +363,9 @@ class PasswordItem(QWidget):
         elif event.button() == Qt.RightButton:
             self.showContextMenu(event.pos())
 
+    def mouseDoubleClickEvent(self, event):
+        self.editPassword()
+
     def showContextMenu(self, pos):
         menu = QMenu(self)
         action = menu.addAction('Copy Username')
@@ -443,6 +376,7 @@ class PasswordItem(QWidget):
         action.triggered.connect(self.copyPasswordToClipboard)
         menu.addSeparator()
         action = menu.addAction('Edit')
+        action.triggered.connect(self.editPassword)
         action = menu.addAction('Delete')
         action.triggered.connect(self.deleteItem)
         menu.popup(self.mapToGlobal(pos))
@@ -889,14 +823,14 @@ class PasswordView(QWidget):
             pos = current_order.find(key, curuuid)
             assert pos != -1
             current = current_order.dataat(pos)[0]
-            current.setPreviewMode(False)
+            current.setSelected(False)
         if vuuid is not None:
             version = current_versions[vuuid]
             key = sortkey(version)
             pos = current_order.find(key, vuuid)
             assert pos != -1
             selected = current_order.dataat(pos)[0]
-            selected.setPreviewMode(True)
+            selected.setSelected(True)
         self.current_item[uuid] = vuuid
 
     @Slot(str)
