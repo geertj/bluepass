@@ -55,7 +55,7 @@ class Bluepass(QApplication):
         def clearClipboard():
             # There is a small race condition here where we could clear
             # somebody else's contents but there's nothing we can do about it.
-            if not clipboard.ownsClipboard() or clipboard.text != password:
+            if not clipboard.ownsClipboard() or clipboard.text != text:
                 return
             clipboard.clear()
         QTimer.singleShot(timeout*1000, clearClipboard)
