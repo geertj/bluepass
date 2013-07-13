@@ -11,7 +11,7 @@ from __future__ import absolute_import, print_function
 import sys
 from PyQt4.QtCore import QTimer
 from PyQt4.QtGui import QApplication, QIcon, QPixmap
-from bluepass.factory import create, instance
+from bluepass.factory import singleton, instance
 from bluepass.platform.qt.backend import BackendProxy
 from bluepass.platform.qt.util import iconpath
 from bluepass.platform.qt.mainwindow import MainWindow
@@ -28,7 +28,7 @@ class Bluepass(QApplication):
         self.setWindowIcon(icon)
 
     def exec_(self):
-        mainwindow = create(MainWindow)
+        mainwindow = singleton(MainWindow)
         mainwindow.show()
         return super(Bluepass, self).exec_()
 

@@ -10,7 +10,7 @@ import math
 import os.path
 
 from bluepass.crypto import CryptoProvider
-from bluepass.factory import create
+from bluepass.factory import instance
 
 __all__ = ('PasswordGenerator',)
 
@@ -40,7 +40,7 @@ class PasswordGenerator(object):
 
     def __init__(self):
         """Create a new PasswordGenerator."""
-        self.crypto = create(CryptoProvider)
+        self.crypto = instance(CryptoProvider)
         self._load_wordlist()
 
     def _expand_alphabet(self, alphabet):

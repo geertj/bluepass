@@ -11,7 +11,7 @@ import logging
 
 from bluepass import _version
 from bluepass.util import misc
-from bluepass.factory import instance, create
+from bluepass.factory import instance
 from bluepass.error import StructuredError
 from bluepass.crypto import CryptoProvider
 from bluepass.model import Model
@@ -32,7 +32,7 @@ class SocketAPIHandler(MessageBusHandler):
 
     def __init__(self):
         super(SocketAPIHandler, self).__init__()
-        self.crypto = create(CryptoProvider)
+        self.crypto = instance(CryptoProvider)
         self.logger = logging.getLogger(__name__)
         instance(Model).add_callback(self._event_callback)
         instance(Locator).add_callback(self._event_callback)
