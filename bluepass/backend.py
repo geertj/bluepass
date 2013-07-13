@@ -97,9 +97,13 @@ class Backend(object):
         # hopefully located all neighbors by then and we can do a once-off
         # sync at startup. This is just a heuristic for optimization, the
         # correctness of our sync algorithm does not depend on this.
-        self.logger.debug('initializing background sync worker')
-        syncer = singleton(Syncer)
-        syncer.start_later(10)
+        if locator.sources:
+            self.logger.debug('initializing background sync worker')
+            syncer = singleton(Syncer)
+            syncer.start_later(10)
+        else:
+            self.logger.warning('no location sources available')
+            self.logger.warning('network synchronization is disabled')
 
         self.logger.debug('initializing control API')
         listener = util.create_listener(self.listen_address)

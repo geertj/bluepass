@@ -283,6 +283,15 @@ class SocketAPIHandler(MessageBusHandler):
     # Locator methods
 
     @method()
+    def locator_is_available(self):
+        """Return whether or not the locator is available.
+
+        There are platforms where we don't have a locator at the moment.
+        """
+        locator = instance(Locator)
+        return len(locator.sources) > 0
+
+    @method()
     def get_neighbors(self):
         """Return current neighbords on the network.
 

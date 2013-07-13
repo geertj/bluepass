@@ -193,6 +193,9 @@ class MenuButton(QPushButton):
 
     def enableEntries(self):
         qapp = QApplication.instance()
+        backend = qapp.backend()
+        locatorAvailable = backend.locator_is_available()
+        self.visiblecb.setEnabled(locatorAvailable)
         pwview = qapp.mainWindow().passwordView()
         versionSelected = bool(pwview.selectedVersion())
         self.copyuser.setEnabled(versionSelected)

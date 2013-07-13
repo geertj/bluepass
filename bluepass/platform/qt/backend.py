@@ -173,6 +173,9 @@ class BackendProxy(QObject):
     def get_neighbors(self):
         return self._call_method('get_neighbors')
 
+    def locator_is_available(self):
+        return self._call_method('locator_is_available')
+
     def set_allow_pairing(self, timeout):
         return self._call_method('set_allow_pairing', timeout)
 

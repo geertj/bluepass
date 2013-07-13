@@ -199,7 +199,12 @@ class ManageVaults(Page):
         button.clicked.connect(self.createVault)
         hbox.addWidget(button)
         button = QPushButton('Connect to Vault', self)
-        button.clicked.connect(self.connectVault)
+        backend = QApplication.instance().backend()
+        available = backend.locator_is_available()
+        if available:
+            button.clicked.connect(self.connectVault)
+        else:
+            button.setEnabled(False)
         hbox.addWidget(button)
         removebtn = QPushButton('Remove Vault', self)
         removebtn.setEnabled(False)
