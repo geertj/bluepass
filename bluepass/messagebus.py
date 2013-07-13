@@ -201,7 +201,7 @@ class MessageBusConnectionBase(object):
             try:
                 nbytes = self.socket.send(self._outbuf)
             except socket.error as e:
-                if errno.is_wouldblock(e):
+                if errno.is_wouldblock(e.errno):
                     break
                 self.logger.error('send() returned error: %s', str(e))
                 self.close()
