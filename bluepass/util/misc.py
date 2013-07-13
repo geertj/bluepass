@@ -29,8 +29,9 @@ def parse_address(s):
     assumed to be an AF_UNIX path name, and it is returned verbatim.
     """
     if ':' in s:
-        host, port = s.split(':')
-        addr = host, int(port)
+        pos = s.rfind(':')
+        host, port = s[:pos], s[pos+1:]
+        addr = (host, int(port))
     else:
         addr = s
     return addr
