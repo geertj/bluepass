@@ -108,7 +108,7 @@ secmem_lock(PyObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "O!:lock", &PyBytes_Type, &b))
         return NULL;
 
-    PyErr_WarnEx(PyExc_UserWarning, "mlock() not available on this platform");
+    PyErr_WarnEx(PyExc_UserWarning, "mlock() is not available", 1);
 
     return PyInt_FromLong(0);
 }
@@ -121,7 +121,7 @@ secmem_unlock(PyObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "O!:lock", &PyBytes_Type, &b))
         return NULL;
 
-    PyErr_WarnEx(PyExc_UserWarning, "munlock() not available on this platform");
+    PyErr_WarnEx(PyExc_UserWarning, "munlock() is not available", 1);
 
     return PyInt_FromLong(0);
 }
@@ -175,7 +175,7 @@ secmem_disable_ptrace(PyObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, ":disable_ptrace"))
         return NULL;
 
-    PyErr_WarnEx(PyExc_UserWarning, "prctl() not available on this platform");
+    PyErr_WarnEx(PyExc_UserWarning, "prctl() is not available", 1);
     Pret = PyBool_FromLong(0);
 
     return Pret;
