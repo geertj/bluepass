@@ -88,14 +88,15 @@ class QtMessageBusConnection(MessageBusConnectionBase):
             super(QtMessageBusConnection, self).call_method(method, *args, **kwargs)
             return
         replies = []
+        loop = QEventLoop()
         def _store_reply(message):
             replies.append(message)
+            loop.quit()
         kwargs['callback'] = _store_reply
         super(QtMessageBusConnection, self).call_method(method, *args, **kwargs)
-        qapp = QApplication.instance()
         mask = QEventLoop.ExcludeUserInputEvents | QEventLoop.WaitForMoreEvents
         while True:
-            qapp.processEvents(mask)
+            loop.processEvents(mask)
             if replies:
                 break
         reply = replies[0]
