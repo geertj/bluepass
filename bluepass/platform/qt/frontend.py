@@ -12,6 +12,7 @@ import sys
 
 from bluepass.factory import singleton
 from bluepass.frontend import Frontend
+from bluepass.util import misc as util
 from bluepass.platform.qt.application import Bluepass
 from bluepass.platform.qt.messagebus import QtMessageBusConnection, QtMessageBusHandler
 from bluepass.platform.qt.backend import BackendProxy, QtBackendController
@@ -38,10 +39,14 @@ class QtFrontend(Frontend):
         args += map(lambda s: s.strip(), qt_options.split(','))
         app = singleton(Bluepass, args)
 
-        bectrl = self.backend_controller = QtBackendController(self.options)
-        if not self.options.get('connect'):
+        connect = self.options.get('connect')
+        if connect:
+            addr = util.parse_address(connect)
+            sock = util.create_connection(addr, 5)
+        else:
+            bectrl = self.backend_controller = QtBackendController(self.options)
             bectrl.start()
-        sock = bectrl.connect()
+            sock = bectrl.connect()
         if sock is None:
             sys.stderr.write('Error: could not connect to backend\n')
             return 1
