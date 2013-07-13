@@ -47,3 +47,13 @@ class Frontend(object):
         is the process exit status and should passed to :py:meth:`sys.exit`.
         """
         raise NotImplementedError
+
+
+# The section below is a debugging aid. To run bluepass under gdb use:
+#  $ gdb `which python`
+#  (gdb) set args -mbluepass.frontend <....>
+#  (gdb) run
+
+if __name__ == '__main__':
+    from bluepass.main import frontend
+    frontend()
