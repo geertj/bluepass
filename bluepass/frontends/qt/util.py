@@ -12,12 +12,6 @@ import bisect
 import os.path
 
 
-def iconpath(name):
-    pkgdir = os.path.split(__file__)[0]
-    path = os.path.join(pkgdir, 'icons', name)
-    return path
-
-
 ## The "blist" package provides a list with better asymptotic insert()
 ## and remove() behavior for operations not at the end of the list.
 #try:

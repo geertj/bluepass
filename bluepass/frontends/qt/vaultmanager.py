@@ -20,7 +20,7 @@ from PyQt4.QtGui import (QWidget, QDialog, QPushButton, QHBoxLayout,
 
 Item = QTableWidgetItem
 
-from bluepass.platform.qt.passwordbutton import (GeneratePasswordButton,
+from .passwordbutton import (GeneratePasswordButton,
         DicewarePasswordConfiguration)
 
 

@@ -12,6 +12,26 @@ import errno
 import socket
 
 
+def asset(*path):
+    """Return the path of an asset specified by *path*."""
+    dname, _ = os.path.split(__file__)
+    dname, _ = os.path.split(dname)
+    base = os.path.join(dname, 'assets')
+    st = try_stat(base)
+    if st is None or not stat.S_ISDIR(st.st_mode):
+        # developer install? Try top of source dir.
+        dname, _ = os.path.split(dname)
+        base = os.path.join(dname, 'assets')
+        st = try_stat(base)
+        if st is None or not stat.S_ISDIR(st.st_mode):
+            raise RuntimeError('Runtime assets not found')
+    asset = os.path.join(base, *path)
+    st = try_stat(asset)
+    if st is None or not stat.S_ISREG(st.st_mode):
+        raise RuntimeError('asset {} not found'.format('/'.join(path)))
+    return asset
+
+
 def gethostname():
     """Return the host name."""
     hostname = socket.gethostname()

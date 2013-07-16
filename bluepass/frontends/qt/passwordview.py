@@ -18,9 +18,10 @@ from PyQt4.QtGui import (QScrollArea, QWidget, QLabel, QVBoxLayout, QPixmap,
         QApplication, QTabBar, QSizePolicy, QCheckBox, QStackedWidget,
         QGridLayout, QMenu, QKeySequence)
 
-from bluepass.platform.qt.util import iconpath, SortedList
-from bluepass.platform.qt.messagebus import MessageBusError
-from bluepass.platform.qt.dialogs import EditPasswordDialog
+from bluepass.util.misc import asset
+from .util import SortedList
+from .messagebus import MessageBusError
+from .dialogs import EditPasswordDialog
 
 
 def sortkey(version):
@@ -260,8 +261,8 @@ class GroupItem(QLabel):
 
     def addWidgets(self):
         opener = QLabel(self)
-        self.pixmap_open = QPixmap(iconpath('triangle-open.png'))
-        self.pixmap_closed = QPixmap(iconpath('triangle-closed.png'))
+        self.pixmap_open = QPixmap(asset('png', 'triangle-open.png'))
+        self.pixmap_closed = QPixmap(asset('png', 'triangle-closed.png'))
         opener.setPixmap(self.pixmap_open)
         opener.resize(opener.pixmap().size())
         self.opener = opener

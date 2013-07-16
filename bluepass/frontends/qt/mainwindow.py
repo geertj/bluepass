@@ -13,18 +13,18 @@ from PyQt4.QtGui import (QLabel, QLineEdit, QIcon, QPixmap, QPushButton,
         QAction, QMenu, QStatusBar, QKeySequence, QWidget, QFrame,
         QHBoxLayout, QVBoxLayout, QApplication, QMessageBox)
 
-from bluepass.platform.qt.util import iconpath
-from bluepass.platform.qt.dialogs import PairingApprovalDialog
-from bluepass.platform.qt.passwordview import VaultView
-from bluepass.platform.qt.vaultmanager import VaultManager
-from bluepass.platform.qt.messagebus import MessageBusError
+from bluepass.util.misc import asset
+from .dialogs import PairingApprovalDialog
+from .passwordview import VaultView
+from .vaultmanager import VaultManager
+from .messagebus import MessageBusError
 
 
 class ClearButton(QLabel):
 
     def __init__(self, *args, **kwargs):
         super(ClearButton, self).__init__(*args, **kwargs)
-        pixmap = QPixmap(iconpath('clear.png'))
+        pixmap = QPixmap(asset('png', 'clear.png'))
         self.setPixmap(pixmap)
         self.resize(pixmap.size())
         self.setCursor(Qt.ArrowCursor)
@@ -39,7 +39,7 @@ class SearchEditor(QLineEdit):
         super(SearchEditor, self).__init__(*args, **kwargs)
         self.setPlaceholderText('Enter a search term')
         icon = QLabel(self)
-        pixmap = QPixmap(iconpath('search.png'))
+        pixmap = QPixmap(asset('png', 'search.png'))
         icon.setPixmap(pixmap)
         icon.resize(pixmap.size())
         self.searchicn = icon
@@ -84,7 +84,7 @@ class MenuButton(QPushButton):
     def __init__(self, parent=None):
         super(MenuButton, self).__init__(parent)
         self.setObjectName('menu')
-        self.setIcon(QIcon(QPixmap(iconpath('bluepass.png'))))
+        self.setIcon(QIcon(QPixmap(asset('png', 'bluepass-logo-48.png'))))
         self.setFocusPolicy(Qt.TabFocus)
         self.setFlat(True)
         self.buildMenu()
@@ -219,7 +219,7 @@ class AddButton(QPushButton):
 
     def __init__(self, *args, **kwargs):
         super(AddButton, self).__init__(*args, **kwargs)
-        icon = QIcon(QPixmap(iconpath('add.png')))
+        icon = QIcon(QPixmap(asset('png', 'add.png')))
         self.setIcon(icon)
         self.clicked.connect(self.newPassword)
         self.setFlat(True)

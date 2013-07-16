@@ -11,10 +11,10 @@ from __future__ import absolute_import, print_function
 import time
 import socket
 
+from PyQt4.QtCore import QObject, QProcess, Signal
+
 from bluepass.backend import BackendController
 from bluepass.util import misc as util
-
-from PyQt4.QtCore import QObject, QProcess, Signal
 
 
 class QtBackendController(BackendController):

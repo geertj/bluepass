@@ -13,9 +13,10 @@ import sys
 from bluepass.factory import singleton
 from bluepass.frontend import Frontend
 from bluepass.util import misc as util
-from bluepass.platform.qt.application import Bluepass
-from bluepass.platform.qt.messagebus import QtMessageBusConnection, QtMessageBusHandler
-from bluepass.platform.qt.backend import BackendProxy, QtBackendController
+
+from .application import Bluepass
+from .messagebus import QtMessageBusConnection, QtMessageBusHandler
+from .backend import BackendProxy, QtBackendController
 
 
 class QtFrontend(Frontend):

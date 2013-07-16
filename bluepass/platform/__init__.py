@@ -38,9 +38,13 @@ def get_frontends():
     if _frontends is not None:
         return _frontends
     _frontends = []
-    if os.environ.get('DISPLAY'):
-        from bluepass.platform.qt.frontend import QtFrontend
-        _frontends.append(QtFrontend)
+    if hasattr(os, 'fork'):
+        if sys.platform == 'darwin' or os.environ.get('DISPLAY'):
+            from bluepass.frontends.qt.frontend import QtFrontend
+            _frontends.append(QtFrontend)
+    elif sys.platform.startswith('win'):
+            from bluepass.frontends.qt.frontend import QtFrontend
+            _frontends.append(QtFrontend)
     return _frontends
 
 

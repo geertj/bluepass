@@ -9,13 +9,16 @@
 from __future__ import absolute_import, print_function
 
 import sys
+
 from PyQt4.QtCore import QTimer
 from PyQt4.QtGui import QApplication, QIcon, QPixmap
+
+from bluepass.util.misc import asset
 from bluepass.factory import singleton, instance
-from bluepass.platform.qt.backend import BackendProxy
-from bluepass.platform.qt.util import iconpath
-from bluepass.platform.qt.mainwindow import MainWindow
-from bluepass.platform.qt.vaultmanager import VaultManager
+
+from .backend import BackendProxy
+from .mainwindow import MainWindow
+from .vaultmanager import VaultManager
 
 
 class Bluepass(QApplication):
@@ -24,7 +27,7 @@ class Bluepass(QApplication):
     def __init__(self, args):
         super(Bluepass, self).__init__(args)
         self._config = None
-        icon = QIcon(QPixmap(iconpath('bluepass.png')))
+        icon = QIcon(QPixmap(asset('png', 'bluepass-logo-144.png')))
         self.setWindowIcon(icon)
 
     def exec_(self):

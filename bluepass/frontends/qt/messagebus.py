@@ -8,11 +8,11 @@
 
 from __future__ import absolute_import, print_function
 
-from bluepass.messagebus import *
-
 from PyQt4.QtCore import (QEvent, QObject, QSocketNotifier, QTimer,
         QEventLoop)
 from PyQt4.QtGui import QApplication
+
+from bluepass.messagebus import *
 
 
 class CallbackEvent(QEvent):

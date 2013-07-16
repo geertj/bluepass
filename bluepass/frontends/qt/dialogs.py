@@ -13,10 +13,10 @@ from PyQt4.QtGui import (QDialog, QLineEdit, QTextEdit, QComboBox, QLabel,
         QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout, QApplication,
         QIcon, QPixmap)
 
-from bluepass.platform.qt.util import iconpath, SortedList
-from bluepass.platform.qt.messagebus import MessageBusError
-from bluepass.platform.qt.passwordbutton import (GeneratePasswordButton,
-        RandomPasswordConfiguration)
+from bluepass.util.misc import asset
+from .util import SortedList
+from .messagebus import MessageBusError
+from .passwordbutton import GeneratePasswordButton, RandomPasswordConfiguration
 
 
 class EditPasswordDialog(QDialog):
@@ -100,7 +100,7 @@ class EditPasswordDialog(QDialog):
         self.fields['password'] = (passwdedt.text, passwdedt.setText)
         self.passwdedt = passwdedt
         config = RandomPasswordConfiguration()
-        icon = QIcon(QPixmap(iconpath('eye.png')))
+        icon = QIcon(QPixmap(asset('png', 'eye.png')))
         showbtn = QPushButton(icon, '', self)
         showbtn.setCheckable(True)
         showbtn.toggled.connect(self.setShowPassword)
