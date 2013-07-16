@@ -2,6 +2,7 @@ build/
 dist/
 trash/
 scratch/
+bluepass/assets
 __pycache__
 _version.py
 MANIFEST.in

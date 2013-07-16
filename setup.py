@@ -10,10 +10,12 @@ from __future__ import absolute_import, print_function
 
 import os
 import sys
+import stat
 import tempfile
 import textwrap
 import subprocess
 
+from distutils import dir_util
 from setuptools import setup, Extension
 
 
@@ -42,7 +44,7 @@ version_info = {
 
 def update_version():
     """Update the _version.py file."""
-    fname = os.path.join('.', 'bluepass', '_version.py')
+    fname = os.path.join('bluepass', '_version.py')
     try:
         with open(fname) as fin:
             current = fin.read()
@@ -58,7 +60,7 @@ def update_version():
     with open(tmpname, 'w') as fout:
         fout.write(new)
     os.rename(tmpname, fname)
-    print('Updated _version.py')
+    print('updated _version.py')
 
 
 def update_manifest():
@@ -67,7 +69,7 @@ def update_manifest():
     # than creating a MANIFEST.in where every line just includes one file.
     # Unfortunately, setuptools/distribute do not support this (distutils
     # does).
-    gitdir = os.path.join('.', '.git')
+    gitdir = '.git'
     try:
         st = os.stat(gitdir)
     except OSError:
@@ -90,14 +92,36 @@ def update_manifest():
     with open(tmpname, 'w') as fout:
         fout.write(new)
     os.rename(tmpname, 'MANIFEST.in')
-    print('Updated MANIFEST.in')
+    print('updated MANIFEST.in')
     # Remove the SOURCES.txt that setuptools maintains. It appears not to
     # accurately regenerate it when MANIFEST.in changes.
     sourcestxt = os.path.join('bluepass.egg-info', 'SOURCES.txt')
     if not os.access(sourcestxt, os.R_OK):
         return
     os.unlink(sourcestxt)
-    print('Removed {0}'.format(sourcestxt))
+    print('removed {0}'.format(sourcestxt))
+
+
+def copy_assets():
+    """Copy or symlink the assets in the package directory."""
+    assets = os.path.join('bluepass', 'assets')
+    try:
+        st = os.lstat(assets)
+    except OSError:
+        st = None
+    if hasattr(os, 'symlink'):
+        if st and not stat.S_ISLNK(st.st_mode):
+            raise RuntimeError('{} exists but is not a symlink'.format(assets))
+        if st is None:
+            source = os.path.join('..', 'assets')
+            os.symlink(source, assets)
+            print('created symlink {} -> {}'.format(assets, source))
+    else:
+        if st and not stat.S_ISDIR(st.st_mode):
+            raise Runtimeerror('{} exists but is not a dir'.format(assets))
+        source = 'assets'
+        dir_util.copy_tree(source, assets)
+        print('copied directory {} -> {}'.format(source, assets))
 
 
 def main():
@@ -105,6 +129,7 @@ def main():
     os.chdir(topdir)
     update_version()
     update_manifest()
+    copy_assets()
     extargs = {}
     if sys.platform == 'darwin':
         # Silence warnings about our RETURN_ERROR macro
@@ -112,8 +137,8 @@ def main():
     setup(
         packages = ['bluepass', 'bluepass.ext', 'bluepass.util', 'bluepass',
                     'bluepass.platform', 'bluepass.platform.posix',
-                    'bluepass.platform.linux', 'bluepass.platform.qt',
-                    'bluepass.platform.freedesktop'],
+                    'bluepass.platform.linux', 'bluepass.platform.freedesktop',
+                    'bluepass.frontends', 'bluepass.frontends.qt'],
         ext_modules = [
             Extension('bluepass.ext.openssl', ['bluepass/ext/openssl.c'],
                       libraries=['ssl', 'crypto'], **extargs),
@@ -122,12 +147,11 @@ def main():
             Extension('bluepass.ext._sslex', ['bluepass/ext/_sslex.c'],
                       libraries=['ssl', 'crypto'], **extargs)
         ],
-        package_data = {'bluepass': ['data/*.asc'],
-                        'bluepass.platform.qt': ['icons/*.png']},
+        package_data = {'bluepass': ['assets/png/*', 'assets/diceware/*']},
         install_requires = ['greenlet>=0.4.0'],
         entry_points = {'console_scripts':
                             ['bluepass = bluepass.main:frontend',
-                             'bluepass-backend = bluepass.main:backend'] },
+                             'bluepass-backend = bluepass.main:backend']},
         test_suite = 'nose.collector',
         **version_info
     )

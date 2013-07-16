@@ -9,6 +9,7 @@
 import math
 import os.path
 
+from bluepass.util.misc import asset
 from bluepass.crypto import CryptoProvider
 from bluepass.factory import instance
 
@@ -87,9 +88,7 @@ class PasswordGenerator(object):
 
     def _load_wordlist(self):
         """Load the Diceware wordlist."""
-        pkgdir, modname = os.path.split(__file__)
-        fname = os.path.join(pkgdir, 'data', 'diceware.wordlist.asc')
-        fin = open(fname)
+        fin = open(asset('diceware', 'wordlist.asc'))
         wordlist = []
         for line in fin:
             if line[:5].isdigit() and line[5:6] == '\t':
