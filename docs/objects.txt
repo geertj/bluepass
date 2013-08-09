@@ -1,10 +1,9 @@
+#
+# This file is a reference for the schema of the objects stored in the
+# database.
 
-
-# Store the vault/node/version unencrypted. This is required because we need
-# it for efficient replication, and one of the security assumptions we have is
-# that we do not 
-
-# vaults collection: this is not replicated
+# The vaults collection: this is not replicated. Each vault contains the
+# following fields:
 
 {
     'id': 'uuid',
@@ -14,28 +13,32 @@
     'keys': {
         'sign': {
             'keytype': 'rsa',
-            'public': 'base64(asn1)',
-            'private': 'base64(encrypt(asn1,key,iv))',
+            'public': 'b64(pubkey_asn1)',
+            'private': 'b64(aes_encrypt(privkey_asn1, key, iv))',
             'encinfo': {
                 'algo': 'aes-cbc-pkcs5',
-                'iv': 'base64(random)'
-                'kdf': 'pbkdf2-hmac-sha1',
-                'salt': 'base64(random)'
-                'count': n,
-                'length': bytes,
-            }
+                'iv': 'b64(random())'
+                'kdf': 'pbkdf2-hmac-sha256',
+                'salt': 'b64(random())'
+                'count': itercount,
+                'length': keysize,
+            },
             'pwcheck': {
-                'algo': 'hmac-magic-cookie-sha1',
-                'random': 'base64(random)',
-                'cookie': 'base64(hmac(key,random))'
+                'algo': 'hmac-random-sha256',
+                'random': 'b64(random())',
+                'cookie': 'b64(hmac(key, random))'
             }
         },
         'encrypt': { /* as sign */ },
+        'auth': { /* as sign */ },
     }
 }
 
 
-# items collection: this is replicated
+# The items collection: this is replicated. Each item is as follows:
+# The signature is over the entire item, minus only the signature blob,
+# serialized as json in pure ASCII with sorted keys and no whitespace.
+
 {
     'id': 'uuid',
     '_type': 'Item',
@@ -49,8 +52,8 @@
         ...
     },
     'signature': {
-        'algo': 'rsa-pss-sha1',
-        'blob': 'xxx'
+        'algo': 'rsa-pss-sha256',
+        'blob': 'b64(rsa_sign(canon(message), sign_key))'
     }
 }
 
@@ -62,8 +65,9 @@
     'node': 'uuid',
     'name': 'name',
     'keys': {
-        'sign': { 'key': 'xxx', 'keytype': 'rsa' }
-        'encrypt': { 'key': 'xxx', 'keytype': 'rsa' }
+        'sign': { 'key': 'b64(sign_pubkey)', 'keytype': 'rsa' }
+        'encrypt': { 'key': 'b64(encrypt_pubkey)', 'keytype': 'rsa' }
+        'auth': { 'key': 'b64(auth_pubkey)', 'keytype': 'rsa' }
     },
     'restrictions': { 'synconly': false }
 }
@@ -71,10 +75,10 @@
 {
     '_type': 'EncryptedPayload'
     'algo': 'aes-cbc-pkcs5',
-    'iv': 'xxxx',
-    'blob': 'yyyy'
+    'iv': 'b64(random())',
+    'blob': 'b64(aes_encrypt(contents, symkey, iv))'
     'keyalgo': 'rsa-oaep',
-    'keys' : { 'uuid': 'rsa encrypted symkey', ... }
+    'keys' : { 'uuid': 'b64(rsa_encrypt(symkey, node_encrypt_pubkey))', ... }
 }
 
 
