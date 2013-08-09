@@ -42,7 +42,7 @@ Each item has a few important attributes:
 
  * A type that identifies what kind of item this is.
  * A UUID that uniquely identifies the item in the vault.
- * An "origin", conisisting of the UUID of the node that created the item, and
+ * An "origin", consisting of the UUID of the node that created the item, and
    a monotonically increasing sequence number local to the node.
  * A cryptographic signature by made by the originating node.
 
@@ -76,5 +76,6 @@ operations:
    vault. This operation will create a new node, and will add two certificates
    to the vault: one signed by the original node for the new node, and one the
    other way around. Pairing needs to happen before vaults can be synchronized.
- * Synchronization: the actual trasfer of replicated items between different
+
+ * Synchronization: the actual transfer of replicated items between different
    bluepass instances that share a vault that was previously paired.

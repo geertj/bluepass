@@ -3,76 +3,81 @@ Bluepass Security
 
 This document provides a small summary of the security in Bluepass.
 
-Bluepass security works on two levels:
+Bluepass security works on three levels:
 
- * 
+#1 - Your data stays local
+--------------------------
+
+First and foremost, encrypted password data never leaves your local network.
+Bluepass synchronizes between devices in a peer to peer fashion, on your local
+(W)LAN. This is the best defense. No matter how much advances there will be in
+the future in cryptanalysis, data that is never eavesdropped and stored away
+can never be decrypted.
 
 
-Diceware passwords have 12.92 bits of entropy per word. This gives
-the following table of password strengths:
+#2 - Synchronization traffic is encrypted
+------------------------------------------
 
-Length  Strength
+Each node has 3 RSA keys: an encryption key, a signing key, and an
+authentication key.
+
+When an item is added to Bluepass, it will be encrypted with AES using a
+128-bit random key. This key is a throwaway key used only for this item. The
+AES key is then encrypted using the public encryption key of each of the nodes
+in the vault. This allows each node to decrypt it using its own private
+encryption key.
+
+The signing key is used to sign password items by the originating node in the
+vault. This ensures that no bogus passwords can be broadcasted into the vault.
+Finally, the authentication key is used to prevent unauthorized people on your
+local network to request the contents of a vault.
+
+The encrypted and signed items are then synchronized between the nodes in a
+vault over an SSL connection. This is primarily for hygiene, to protect some
+clear-text metadata that accompanies the encrypted items. This SSL connection
+uses 256-bit AES using an anonymous DH key exchange. The nodes authenticate to
+each other using an application level protocol whereby they use their private
+authentication key to sign the SSL channel bindings.
+
+If the traffic were captured (for example, say you'd have the urge to
+synchronize between your devices via an aiport wireless LAN) then this data is
+safe as long as RSA and AES is not broken. In particular, it is not possible to
+construct a dictonary attack against this data.
+
+
+#3 - Encrypted master keys
+---------------------------
+
+The sychronized items are simply added to an append-only database. Each node
+has a private RSA key to unlock items encrypted to it. This key is stored in
+the local database as well. The key is encrypted with AES, using a key that is
+derived from a (by default) 5 word computer-generated Diceware passphrase. The
+passphrase is properly salted and stretched into a key using PBKDF2. The
+number of iterations is tuned dynamically so that the PBKDF2 calculalation
+takes around 0.2 seconds on the host system (with a minimum of 4096). Usually
+it's around 100,000 iterations.
+
+If a device with a Bluepass database on it would be stolen or compromised, then
+an attacker can mount a brute-force attack against the passphrase. It won't be
+easy because due to the salting done by PBKDF2, rainbow tables are of no use,
+and neither can the keys in the database be attacked in parallel. And thanks to
+the key stretching, the brute force attack will be slowed down by orders of
+mangitude.
+
+Diceware passwords have 12.92 bits of entropy per word. This gives the
+following table of password strengths:
+
+Length  Entropy
 ------  --------
-1       12.92
-2       25.84
-3       38.76
 4       51.68
 5       64.60
 6       77.52
 
-Threat model
-============
-
-The passwords are used to encrypt the private RSA keys in a password vault.
-These keys never leave the current system. If a system is compromised, we
-assume the vault is exposed.
-
-The passwords are used as input in PBKDF2 with a variable number of iterations
-and a 128-bit random salt. The 128-bit random salt prevents any precomputed
-rainbow table attack, as well as checking multiple passwords in parallel. The
-salt is too big for that.
-
-The number of iterations is tuned dynamically so that the PBKDF2 calculalation
-takes between 0.1 and 0.2 seconds on the host system (with a minimum of 4096).
-
-The actual passwords are encrypted with 128-bit AES with a fully random key.
-The key is encrypted with 2048-bit RSA. The RSA private key is then encrypted
-with a key derived from a password with the PBKDF2 key derivation function. A
-128-bit random salt is used with PBKDF2, and a random number of iterations that
-brings the running time of a single round between 0.1 and 0.2 seconds.
-
-Assuming RSA and AES stay unbroken, a brute force attack against the password
-is an attacker's best way to get into a vault. This is because the entropy of
-the password typically lower than the 128 bits of AES and the 112-bit
-equivalent entropy of a 2048-bit RSA key.
-
-A brute force attack against our password is made more difficult by salting and
-key stretching. The 128-bit random salt we use effectively prevents any
-precomputed rainbow table attack, as well as any parallel attack on all the
-keys in the vault. The attacker will have to do full PBKDF2 calculations for each
-password in the vault individually. Bluepass uses PBKDF2's key stretching with
-an random iteration count so that the running time the algorithm is around 0.2
-seconds (with a minimum of 4096 rounds). 
-
-We assume the followign classes of adversaries:
-
- * Home user. He will have access to his own PC. He will be able to do about
-   300 million PBKDF2 calculations per year.
- * Organized crime. We assume their available computing capacity is about 1.000
-   time that of a home user.
- * National security agency. We assume their available computing capacity is
-   about 1.000 times that of an organized crime.
-
-We then assume Moore's law will continue to hold, and that the computing
-capacity will double every 2 years. This gives us the following table:
-
-Key Length  Entropy   Home User  Organized Crime  Govt Agency
-----------  --------  ---------  ---------------  -----------
-1           12.92     13 mins    
-2           25.84     70 days
-3           38.76     10 years
-4           51.68     37 years
-5           64.60     62 years
-6           77.52     88 years
-
-
+Nobody really knows how much computing power the national security agencies
+have so it is hard to say how long such an attach would take. The largest brute
+force attack that I am aware of was on a 64-bit RC5 symmetric cipher by
+distributed.net. This was some time ago though, in 2002. However, due to our
+key stretching, the attack becomes usually about 100,000 times more difficult,
+which are an extra 16.6 or so bits. So using a 5 word Diceware passphrase would
+be equivalent to 80-bits symmetic encryption. And a 6 word passphrase would be
+equivalent to 93 odd bits.
