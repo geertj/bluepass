@@ -605,12 +605,12 @@ class SyncAPIApplication(WSGIApplication):
         if not vault:
             raise HTTPReturn(http.NOT_FOUND)
         self._do_auth_hmac_cb(uuid)
-        # Sign the certificate that was sent to tus
+        # Sign the certificate request that was sent to tus
         certinfo = self.entity
         if not certinfo or not isinstance(certinfo, dict):
             raise HTTPReturn(http.BAD_REQUEST)
         model.add_certificate(uuid, certinfo)
-        # And send our own certificate in return
+        # And send our own certificate request in return
         certinfo = { 'node': vault['node'], 'name': socket.gethostname() }
         certkeys = certinfo['keys'] = {}
         for key in vault['keys']:
