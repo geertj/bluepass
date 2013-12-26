@@ -6,8 +6,8 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
-import socket
 import logging
+import binascii
 
 from bluepass import _version
 from bluepass.util import misc
@@ -17,31 +17,85 @@ from bluepass.crypto import CryptoProvider
 from bluepass.model import Model
 from bluepass.passwords import PasswordGenerator
 from bluepass.locator import Locator
-from bluepass.messagebus import MessageBusHandler, MessageBusServer, method
 from bluepass.syncapi import SyncAPIPublisher, SyncAPIClient, SyncAPIError
+
+import gruvi
+from gruvi.jsonrpc import JsonRpcServer
 
 
 class PairingError(StructuredError):
     """Pairing error."""
 
 
+def method():
+    """Decorate a method."""
+    def decorate(method):
+        method.method = True
+        return method
+    return decorate
+
+
+class MessageBusHandler(object):
+    """JSON-RPC procotol handler."""
+
+    def __init__(self):
+        self.local = gruvi.local()
+
+    @property
+    def message(self):
+        return self.local.message
+
+    @property
+    def protocol(self):
+        return self.local.protocol
+
+    @property
+    def transport(self):
+        return self.local.transport
+
+    def send_response(self, result):
+        response = gruvi.jsonrpc.create_response(self.message, result)
+        self.protocol.send_message(self.transport, response)
+        self.local.response_sent = True
+
+    def send_notification(self, name, *args):
+        message = gruvi.jsonrpc.create_notification(name, *args)
+        self.protocol.send_message(self.transport, message)
+
+    def __call__(self, message, protocol, transport):
+        method = message.get('method')
+        if method is None:
+            return
+        handler = getattr(self, method)
+        if handler is None or not getattr(handler, 'method', False):
+            return
+        args = message.get('params', ())
+        self.local.message = message
+        self.local.protocol = protocol
+        self.local.transport = transport
+        self.local.response_sent = False
+        response = None
+        try:
+            result = handler(*args)
+        except StructuredError as e:
+            if not self.local.response_sent:
+                response = gruvi.jsonrpc.create_error(message, e.asdict())
+        else:
+            if not self.local.response_sent:
+                response = gruvi.jsonrpc.create_response(message, result)
+        return response
+
+
 class SocketAPIHandler(MessageBusHandler):
     """A message bus handler that implements our socket API."""
 
-    # NOTE: all methods run in separate greenlets!
+    # NOTE: all methods run in separate fibers!
 
     def __init__(self):
         super(SocketAPIHandler, self).__init__()
         self.crypto = instance(CryptoProvider)
         self.logger = logging.getLogger(__name__)
-        instance(Model).add_callback(self._event_callback)
-        instance(Locator).add_callback(self._event_callback)
-        instance(SyncAPIPublisher).add_callback(self._event_callback)
         self.pairdata = {}
-
-    def _event_callback(self, event, *args):
-        # Forward the event over the message bus.
-        instance(MessageBusServer).send_signal(None, event, *args)
 
     # Version
 
@@ -99,7 +153,7 @@ class SocketAPIHandler(MessageBusHandler):
         if not async:
             return model.create_vault(name, password)
         uuid = self.crypto.randuuid()
-        self.early_response(uuid)
+        self.send_response(uuid)
         try:
             vault = model.create_vault(name, password, uuid)
         except StructuredError as e:
@@ -112,7 +166,7 @@ class SocketAPIHandler(MessageBusHandler):
         else:
             status = 'OK'
             detail = vault
-        self.connection.send_signal('VaultCreationComplete', uuid, status, detail)
+        self.send_notification('VaultCreationComplete', uuid, status, detail)
 
     @method()
     def get_vault(self, uuid):
@@ -334,26 +388,26 @@ class SocketAPIHandler(MessageBusHandler):
         if model.get_vault(vault):
             raise PairingError('Exists', 'Vault already exists')
         # Don't keep the GUI blocked while we wait for remote approval.
-        cookie = self.crypto.random(16).encode('hex')
-        self.early_response(cookie)
+        cookie = binascii.hexlify(self.crypto.random(16)).decode('ascii')
+        self.send_response(cookie)
         name = misc.gethostname()
         for addr in neighbor['addresses']:
-            client = SyncAPIClient(addr)
+            client = SyncAPIClient()
+            addr = addr['addr']
             try:
-                client.connect()
+                client.connect(addr)
             except SyncAPIError as e:
                 continue  # try next address
             try:
                 kxid = client.pair_step1(vault, name)
             except SyncAPIError as e:
-                status = e[0]
+                status = e.args[0]
                 detail = e.asdict()
             else:
                 status = 'OK'
                 detail = {}
                 self.pairdata[cookie] = (kxid, neighbor, addr)
-            self.connection.send_signal('PairNeighborStep1Completed', cookie,
-                                        status, detail)
+            self.send_notification('PairNeighborStep1Completed', cookie, status, detail)
             client.close()
             break
 
@@ -377,7 +431,7 @@ class SocketAPIHandler(MessageBusHandler):
             raise PairingError('NotFound', 'No such key exchange ID')
         kxid, neighbor, addr = self.pairdata.pop(cookie)
         # Again don't keep the GUI blocked while we pair and do a full sync
-        self.early_response()
+        self.send_response(None)
         model = instance(Model)
         vault = model.create_vault(name, password, neighbor['vault'],
                                    notify=False)
@@ -386,12 +440,12 @@ class SocketAPIHandler(MessageBusHandler):
         for key in vault['keys']:
             keys[key] = { 'key': vault['keys'][key]['public'],
                           'keytype': vault['keys'][key]['keytype'] }
-        client = SyncAPIClient(addr)
-        client.connect()
+        client = SyncAPIClient()
+        client.connect(addr)
         try:
             peercert = client.pair_step2(vault['id'], kxid, pin, certinfo)
         except SyncAPIError as e:
-            status = e[0]
+            status = e.args[0]
             detail = e.asdict()
             model.delete_vault(vault)
         else:
@@ -400,6 +454,22 @@ class SocketAPIHandler(MessageBusHandler):
             model.add_certificate(vault['id'], peercert)
             client.sync(vault['id'], model, notify=False)
             model.raise_event('VaultAdded', vault)
-        self.connection.send_signal('PairNeighborStep2Completed', cookie,
-                                    status, detail)
+        self.send_notification('PairNeighborStep2Completed', cookie, status,
+                               detail)
         client.close()
+
+
+class SocketAPIServer(JsonRpcServer):
+
+    def __init__(self):
+        super(SocketAPIServer, self).__init__(SocketAPIHandler(), _trace=True)
+        instance(Model).add_callback(self._forward_events)
+        instance(Locator).add_callback(self._forward_events)
+        instance(SyncAPIPublisher).add_callback(self._forward_events)
+
+    def _forward_events(self, event, *args):
+        # Forward the event over the message bus.
+        for client in self.clients:
+            message = gruvi.jsonrpc.create_notification(event, *args)
+            self.send_message(client, message)
+

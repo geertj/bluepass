@@ -12,7 +12,9 @@ import time
 import math
 import hashlib
 import logging
-import base64
+import uuid
+import textwrap
+import binascii
 
 from bluepass.ext import openssl
 
@@ -21,7 +23,7 @@ CryptoError = openssl.Error
 # Some useful commonly used DH parameters.
 dhparams = \
 {
-    'skip2048': base64.b64decode(b"""
+    'skip2048': textwrap.dedent("""\
     MIIBCAKCAQEA9kJXtwh/CBdyorrWqULzBej5UxE5T7bxbrlLOCDaAadWoxTpj0BV
     89AHxstDqZSt90xkhkn4DIO9ZekX1KHTUPj1WV/cdlJPPT2N286Z4VeSWc39uK50
     T8X8dryDxUcwYc58yWb/Ffm7/ZFexwGq01uejaClcjrUGvC/RgBYK+X0iP1YTknb
@@ -29,11 +31,11 @@ dhparams = \
     Q6MdGGzeMyEstSr/POGxKUAYEY18hKcKctaGxAMZyAcpesqVDNmWn6vQClCbAkbT
     CD1mpF1Bn5x8vYlLIhkmuquiXsNV6TILOwIBAg==
     """),
-    'ietf768': base64.b64decode(b"""
+    'ietf768': textwrap.dedent("""\
     MGYCYQD//////////8kP2qIhaMI0xMZii4DcHNEpAk4IimfMdAILvqY7E5siUUoIeY40BN3vlRmz
     zTpDGzArCm3yXxQ3T+E1bW1RwkXkhbV2Yl5+xvRMQummOjYg//////////8CAQI=
     """),
-    'ietf1024': base64.b64decode(b"""
+    'ietf1024': textwrap.dedent("""\
     MIGHAoGBAP//////////yQ/aoiFowjTExmKLgNwc0SkCTgiKZ8x0Agu+pjsTmyJRSgh5jjQE3e+V
     GbPNOkMbMCsKbfJfFDdP4TVtbVHCReSFtXZiXn7G9ExC6aY37WsL/1y29Aa37e44a/taiZ+lrp8k
     EXxLH+ZJKGZR7OZTgf//////////AgEC
@@ -182,15 +184,13 @@ class CryptoProvider(object):
 
     def randint(self, bits):
         """Return a random integer with `bits' bits."""
-        nbytes = (bits + 7) / 8
+        nbytes = (bits + 7) // 8
         mask = (1<<bits)-1
-        return int(self.random(nbytes).encode('hex'), 16) & mask
+        return int(binascii.hexlify(self.random(nbytes)), 16) & mask
 
     def randuuid(self):
         """Return a type-4 random UUID."""
-        return '%08x-%04x-4%03x-%04x-%012x' % \
-               (self.randint(32), self.randint(16), self.randint(12),
-                0x8000 + self.randint(14), self.randint(48))
+        return str(uuid.uuid4())
 
     def _get_hash(self, name):
         """INTERNAL: return a hash contructor from its name."""
@@ -210,11 +210,18 @@ class CryptoProvider(object):
         md_size = md().digest_size
         if length > 255*md_size:
             raise ValueError('can only generate keys up to 255*md_size bytes')
+        if not isinstance(password, bytes):
+            password = password.encode('ascii')
         if salt is None:
-            salt = '\x00' * md_size
+            salt = b'\x00' * md_size
+        elif not isinstance(salt, bytes):
+            salt = salt.encode('ascii')
+        if not isinstance(info, bytes):
+            info = info.encode('ascii')
         prk = hmac.new(salt, password, md).digest()
-        blocks = ['']
+        blocks = [b'']
         nblocks = (length + md_size - 1) // md_size
         for i in range(nblocks):
-            blocks.append(hmac.new(prk, blocks[i] + info + chr(i+1), md).digest())
-        return ''.join(blocks)[:length]
+            blocks.append(hmac.new(prk, blocks[i] + info +
+                                    chr(i+1).encode('ascii'), md).digest())
+        return b''.join(blocks)[:length]

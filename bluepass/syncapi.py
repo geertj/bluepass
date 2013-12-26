@@ -6,39 +6,59 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
+import os
 import re
 import sys
 import time
 import logging
 import traceback
+import binascii
+import socket
+import ssl
 
 try:
     import httplib as http
-    from httplib import HTTPException
     from urlparse import parse_qs
 except ImportError:
     from http import client as http
-    from http.client import HTTPException
     from urllib.parse import parse_qs
 
-from gevent import socket, local, Greenlet
-from gevent.event import Event
-from gevent.pywsgi import WSGIHandler, WSGIServer
+import gruvi
+from gruvi import Fiber, compat
+from gruvi.http import HttpServer, HttpClient
 
 from bluepass import _version
 from bluepass.error import StructuredError
-from bluepass.factory import instance
+from bluepass.factory import instance, singleton
 from bluepass.crypto import CryptoProvider, CryptoError, dhparams
 from bluepass.model import Model
 from bluepass.locator import Locator
-from bluepass.messagebus import MessageBusServer
 from bluepass.util import json, base64
-from bluepass.util.ssl import wrap_socket, HTTPSConnection
+from bluepass.util.ssl import patch_gruvi_ssl
 from bluepass.util.uuid import check_uuid4
 from bluepass.util.logging import ContextLogger
+from bluepass.util import misc as util
 
-__all__ = ('SyncAPIError', 'SyncAPIClient', 'SyncAPIApplication',
-           'SyncAPIServer')
+__all__ = ('SyncAPIError', 'SyncAPIClient', 'SyncAPIApplication', 'SyncAPIServer')
+
+
+def init_syncapi_ssl(pemdir):
+    """Perform once-off SSL initialization for the syncapi."""
+    init_pem_directory(pemdir)
+    SyncAPIClient.pem_directory = pemdir
+    SyncAPIServer.pem_directory = pemdir
+    if not compat.PY3:
+        patch_gruvi_ssl()
+
+def init_pem_directory(pemdir):
+    fname = os.path.join(pemdir, 'dhparams.pem')
+    st = util.try_stat(fname)
+    if st is not None:
+        return
+    with open(fname, 'w') as fout:
+        fout.write('-----BEGIN DH PARAMETERS-----\n')
+        fout.write(dhparams['skip2048'])
+        fout.write('-----END DH PARAMETERS-----\n')
 
 
 class SyncAPIError(StructuredError):
@@ -81,7 +101,7 @@ def parse_option_header(header, sep1=' ', sep2=' '):
 def create_option_header(value, sep1=' ', sep2=' ', **kwargs):
     """Create an option header."""
     result = [value]
-    for key,value in kwargs.iteritems():
+    for key,value in kwargs.items():
         result.append(sep1)
         result.append(' ' if sep1 != ' ' else '')
         result.append(key)
@@ -109,8 +129,8 @@ def parse_vector(vector):
 def dump_vector(vector):
     """Dump an up-to-date vector."""
     vec = ','.join(['%s:%s' % (uuid, seqno) for (uuid, seqno) in vector])
-    if isinstance(vec, unicode):
-        vec = vec.encode('iso-8859-1')  # XXX: investiage
+    #if isinstance(vec, unicode):
+    #    vec = vec.encode('iso-8859-1')  # XXX: investiage
     return vec
 
 
@@ -123,16 +143,18 @@ class SyncAPIClient(object):
     and synchronization (sync()).
     """
 
-    def __init__(self, address, **ssl_args):
+    pem_directory = None
+
+    def __init__(self):
         """Create a new client for the syncapi API at `address`."""
-        self.address = address
-        ssl_args.setdefault('dhparams', dhparams['skip2048'])
-        ssl_args.setdefault('ciphers', 'ADH+AES')
-        self.ssl_args = ssl_args
+        self.address = None
         self.connection = None
         logger = logging.getLogger(__name__)
         self.logger = ContextLogger(logger)
         self.crypto = CryptoProvider()
+        if self.pem_directory is None and compat.PY3:
+            self.pem_directory = tempfile.mkdtemp()
+            init_pem_directory(self.pem_directory)
 
     def _make_request(self, method, url, headers=None, body=None):
         """Make an HTTP request to the API.
@@ -140,29 +162,27 @@ class SyncAPIClient(object):
         This returns the HTTPResponse object on success, or None on failure.
         """
         logger = self.logger
-        if headers is None:
-            headers = []
+        headers = [] if headers is None else headers[:]
         headers.append(('User-Agent', 'Bluepass/%s' % _version.version))
         headers.append(('Accept', 'text/json'))
         if body is None:
-            body = ''
+            body = b''
         else:
-            body = json.dumps(body)
+            body = json.dumps(body).encode('utf8')
             headers.append(('Content-Type', 'text/json'))
         connection = self.connection
         assert connection is not None
         try:
             logger.debug('client request: %s %s', method, url)
-            connection.request(method, url, body, dict(headers))
+            connection.request(method, url, headers, body)
             response = connection.getresponse()
-            headers = response.getheaders()
             body = response.read()
-        except (socket.error, HTTPException) as e:
+        except gruvi.Error as e:
             logger.error('error when making HTTP request: %s', str(e))
             return
-        ctype = response.getheader('Content-Type')
+        ctype = response.get_header('Content-Type')
         if ctype == 'text/json':
-            parsed = json.try_loads(body)
+            parsed = json.try_loads(body.decode('utf8'))
             if parsed is None:
                 logger.error('response body contains invalid JSON')
                 return
@@ -172,23 +192,23 @@ class SyncAPIClient(object):
             response.entity = None
         return response
 
-    def connect(self):
+    def connect(self, address):
         """Connect to the remote syncapi."""
-        ssl_args = { 'dhparams': dhparams['skip2048'], 'ciphers': 'ADH+AES' }
-        # Support both dict style addresses for arbitrary address families,
-        # as well as (host, port) tuples for IPv4.
-        if isinstance(self.address, dict):
-            host = self.address['host']; port = None
-            sockinfo = self.address
+        if compat.PY3:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
+            context.set_ciphers('ADH+AES')
+            context.load_dh_params(os.path.join(self.pem_directory, 'dhparams.pem'))
+            sslargs = {'context': context}
         else:
-            host, port = self.address
-            sockinfo = None
-        connection = HTTPSConnection(host, port, sockinfo=sockinfo, **ssl_args)
+            sslargs = {'dhparams': base64.decode(dhparams['skip2048']),
+                       'ciphers': 'ADH+AES'}
+        connection = HttpClient()
         try:
-            connection.connect()
-        except socket.error as e:
-            self.logger.error('could not connect to %s:%d' % self.address)
+            connection.connect(address, ssl=True, **sslargs)
+        except gruvi.Error as e:
+            self.logger.error('could not connect to %s:%d' % address)
             raise SyncAPIError('RemoteError', 'Could not connect')
+        self.address = address
         self.connection = connection
 
     def close(self):
@@ -202,8 +222,8 @@ class SyncAPIClient(object):
 
     def _get_hmac_cb_auth(self, kxid, pin):
         """Return the headers for a client to server HMAC_CB auth."""
-        cb = self.connection.sock.get_channel_binding('tls-unique')
-        signature = self.crypto.hmac(adjust_pin(pin, +1), cb, 'sha1')
+        cb = self.connection.transport.ssl.get_channel_binding('tls-unique')
+        signature = self.crypto.hmac(adjust_pin(pin, +1).encode('ascii'), cb, 'sha1')
         signature = base64.encode(signature)
         auth = create_option_header('HMAC_CB', kxid=kxid, signature=signature)
         headers = [('Authorization', auth)]
@@ -212,7 +232,7 @@ class SyncAPIClient(object):
     def _check_hmac_cb_auth(self, response, pin):
         """Check a server to client HMAC_CB auth."""
         logger = self.logger
-        authinfo = response.getheader('Authentication-Info', '')
+        authinfo = response.get_header('Authentication-Info', '')
         try:
             method, options = parse_option_header(authinfo)
         except ValueError:
@@ -222,8 +242,8 @@ class SyncAPIClient(object):
             logger.error('illegal Authentication-Info header: %s', authinfo)
             return False
         signature = base64.decode(options['signature'])
-        cb = self.connection.sock.get_channel_binding('tls-unique')
-        check = self.crypto.hmac(adjust_pin(pin, -1), cb, 'sha1')
+        cb = self.connection.transport.ssl.get_channel_binding('tls-unique')
+        check = self.crypto.hmac(adjust_pin(pin, -1).encode('ascii'), cb, 'sha1')
         if check != signature:
             logger.error('HMAC_CB signature did not match')
             return False
@@ -247,8 +267,8 @@ class SyncAPIClient(object):
         status = response.status
         if status != 401:
             logger.error('expecting HTTP status 401 (got: %s)', status)
-            raise SyncAPIError('RemoteError', response.reason)
-        wwwauth = response.getheader('WWW-Authenticate', '')
+            raise SyncAPIError('RemoteError', 'HTTP {}'.format(response.status))
+        wwwauth = response.get_header('WWW-Authenticate', '')
         try:
             method, options = parse_option_header(wwwauth)
         except ValueError:
@@ -276,7 +296,7 @@ class SyncAPIClient(object):
         status = response.status
         if status != 200:
             logger.error('expecting HTTP status 200 (got: %s)', status)
-            raise SyncAPIError('RemoteError', response.reason)
+            raise SyncAPIError('RemoteError', 'HTTP status {}'.format(response.status))
         if not self._check_hmac_cb_auth(response, pin):
             raise SyncAPIError('RemoteError', 'Illegal syncapi response')
         peercert = response.entity
@@ -286,7 +306,7 @@ class SyncAPIClient(object):
 
     def _get_rsa_cb_auth(self, uuid, model):
         """Return the headers for RSA_CB authentication."""
-        cb = self.connection.sock.get_channel_binding('tls-unique')
+        cb = self.connection.transport.ssl.get_channel_binding('tls-unique')
         privkey = model.get_auth_key(uuid)
         assert privkey is not None
         signature = self.crypto.rsa_sign(cb, privkey, 'pss-sha1')
@@ -299,7 +319,7 @@ class SyncAPIClient(object):
     def _check_rsa_cb_auth(self, uuid, response, model):
         """Verify RSA_CB authentication."""
         logger = self.logger
-        authinfo = response.getheader('Authentication-Info', '')
+        authinfo = response.get_header('Authentication-Info', '')
         try:
             method, options = parse_option_header(authinfo)
         except ValueError:
@@ -310,7 +330,7 @@ class SyncAPIClient(object):
                 or not check_uuid4(options['node']):
             logger.error('illegal Authentication-Info header')
             return False
-        cb = self.connection.sock.get_channel_binding('tls-unique')
+        cb = self.connection.transport.ssl.get_channel_binding('tls-unique')
         signature = base64.decode(options['signature'])
         cert = model.get_certificate(uuid, options['node'])
         if cert is None:
@@ -353,7 +373,7 @@ class SyncAPIClient(object):
             raise SyncAPIError('RemoteError', 'Illegal syncapi response')
         nitems = model.import_items(uuid, initems, notify=notify)
         logger.debug('imported %d items into model', nitems)
-        vector = response.getheader('X-Vector', '')
+        vector = response.get_header('X-Vector', '')
         try:
             vector = parse_vector(vector)
         except ValueError as e:
@@ -405,7 +425,7 @@ class WSGIApplication(object):
         self.logger = logging.getLogger(__name__)
         self.routes = []
         self._init_mapper()
-        self.local = local.local()
+        self.local = gruvi.local()
 
     def _init_mapper(self):
         """Add all routes that were configured with the @expose() decorator."""
@@ -459,8 +479,8 @@ class WSGIApplication(object):
         if ctype:
             if ctype != 'text/json':
                 return self._simple_response(http.UNSUPPORTED_MEDIA_TYPE)
-            entity = env['wsgi.input'].read()
-            entity = json.try_loads(entity)
+            body = env['wsgi.input'].read()
+            entity = json.try_loads(body.decode('utf8'))
             if entity is None:
                 return self._simple_response(http.BAD_REQUEST)
             self.entity = entity
@@ -477,7 +497,7 @@ class WSGIApplication(object):
             self.logger.error(''.join(lines))
             return self._simple_response(http.INTERNAL_SERVER_ERROR)
         if result is not None:
-            result = json.dumps(result)
+            result = json.dumps(result).encode('utf8')
             self.headers.append(('Content-Type', 'text/json'))
         else:
             result = ''
@@ -521,11 +541,14 @@ class SyncAPIApplication(WSGIApplication):
             name = options['name']
             if not self.allow_pairing:
                 raise HTTPReturn('403 Pairing Disabled')
-            bus = instance(MessageBusServer)
-            kxid = self.crypto.random(16).encode('hex')
+            from bluepass.socketapi import SocketAPIServer
+            bus = instance(SocketAPIServer)
+            kxid = binascii.hexlify(self.crypto.random(16)).decode('ascii')
             pin = '%06d' % (self.crypto.randint(bits=31) % 1000000)
-            approved = bus.call_method(None, 'get_pairing_approval',
-                                       name, uuid, pin, kxid, timeout=60)
+            for client in bus.clients:
+                approved = bus.call_method(client, 'get_pairing_approval',
+                                           name, uuid, pin, kxid)
+                break
             if not approved:
                 raise HTTPReturn('403 Approval Denied')
             restrictions = {}
@@ -546,16 +569,17 @@ class SyncAPIApplication(WSGIApplication):
             if now - starttime > 60:
                 raise HTTPReturn('403 Request Timeout')
             cb = self.environ['SSL_CHANNEL_BINDING_TLS_UNIQUE']
-            check = self.crypto.hmac(adjust_pin(pin, +1), cb, 'sha1')
+            check = self.crypto.hmac(adjust_pin(pin, +1).encode('ascii'), cb, 'sha1')
             if check != signature:
                 raise HTTPReturn('403 Invalid PIN')
-            bus = instance(MessageBusServer)
-            bus.send_signal(None, 'PairingComplete', kxid)
+            from bluepass.socketapi import SocketAPIServer
+            bus = instance(SocketAPIServer)
+            for client in bus.clients:
+                bus.send_notification(client, 'PairingComplete', kxid)
             # Prove to the other side we also know the PIN
-            signature = self.crypto.hmac(adjust_pin(pin, -1), cb, 'sha1')
+            signature = self.crypto.hmac(adjust_pin(pin, -1).encode('ascii'), cb, 'sha1')
             signature = base64.encode(signature)
-            authinfo = create_option_header('HMAC_CB', kxid=kxid,
-                                            signature=signature)
+            authinfo = create_option_header('HMAC_CB', kxid=kxid, signature=signature)
             self.headers.append(('Authentication-Info', authinfo))
         else:
             raise HTTPReturn(http.UNAUTHORIZED, headers)
@@ -656,45 +680,51 @@ class SyncAPIApplication(WSGIApplication):
         model.import_items(uuid, items)
 
 
-class SyncAPIHandler(WSGIHandler):
+class SyncAPIServer(HttpServer):
+    """The WSGI server that runs the syncapi."""
 
-    def get_environ(self):
-        env = super(SyncAPIHandler, self).get_environ()
-        env['SSL_CIPHER'] = self.socket.cipher()
-        cb = self.socket.get_channel_binding('tls-unique')
+    pem_directory = None
+
+    def __init__(self):
+        handler = singleton(SyncAPIApplication)
+        super(SyncAPIServer, self).__init__(handler)
+        if self.pem_directory is None and compat.PY3:
+            self.pem_directory = tempfile.mkdtemp()
+            init_pem_directory(self.pem_directory)
+
+    def _get_environ(self, transport, message):
+        env = super(SyncAPIServer, self)._get_environ(transport, message)
+        env['SSL_CIPHER'] = transport.ssl.cipher()
+        cb = transport.ssl.get_channel_binding('tls-unique')
         env['SSL_CHANNEL_BINDING_TLS_UNIQUE'] = cb
         return env
 
-
-class SyncAPIServer(WSGIServer):
-    """The WSGI server that runs the syncapi."""
-
-    handler_class = SyncAPIHandler
-
-    def __init__(self, listener, application, **ssl_args):
-        listener.setblocking(0)
-        ssl_args.setdefault('dhparams', dhparams['skip2048'])
-        ssl_args.setdefault('ciphers', 'ADH+AES')
-        super(SyncAPIServer, self).__init__(listener, application, spawn=10,
-                                            log=None, **ssl_args)
-        self.wrap_socket = wrap_socket
+    def listen(self, address):
+        if compat.PY3:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
+            context.set_ciphers('ADH+AES')
+            context.load_dh_params(os.path.join(self.pem_directory, 'dhparams.pem'))
+            sslargs = {'context': context}
+        else:
+            sslargs = {'dhparams': base64.decode(dhparams['skip2048']),
+                       'ciphers': 'ADH+AES'}
+        super(SyncAPIServer, self).listen(address, ssl=True, **sslargs)
 
 
-class SyncAPIPublisher(Greenlet):
+class SyncAPIPublisher(Fiber):
     """Sync API publisher.
 
     The Publisher is responsible for publising the location of our syncapi
     via the Locator, and keeping these published locations up to date.
 
     The publisher needs to make calls to the locator which might block,
-    and therefore runs in its own greenlet.
+    and therefore runs in its own fiber.
     """
 
     def __init__(self, server):
-        super(SyncAPIPublisher, self).__init__()
+        super(SyncAPIPublisher, self).__init__(target=self._run)
         self.server = server
-        self.queue = []
-        self.queue_notempty = Event()
+        self.queue = gruvi.Queue()
         self.published_nodes = set()
         self.allow_pairing = False
         self.allow_pairing_until = None
@@ -712,17 +742,14 @@ class SyncAPIPublisher(Greenlet):
     def set_allow_pairing(self, timeout):
         """Allow pairing for up to `timeout` seconds. Use a timeout
         of zero to disable pairing."""
-        self.queue.append(('allow_pairing', (timeout,)))
-        self.queue_notempty.set()
+        self.queue.put(('allow_pairing', (timeout,)))
 
     def stop(self):
         """Stop the publisher."""
-        self.queue.append(('stop', None))
-        self.queue_notempty.set()
+        self.queue.put(('stop', None))
 
     def _event_callback(self, event, *args):
-        self.queue.append((event, args))
-        self.queue_notempty.set()
+        self.queue.put((event, args))
 
     def _get_hostname(self):
         name = socket.gethostname()
@@ -732,7 +759,7 @@ class SyncAPIPublisher(Greenlet):
         return name
 
     def _run(self):
-        """Main execution loop, runs in its own greenlet."""
+        """Main execution loop, runs in its own fiber."""
         logger = logging.getLogger(__name__)
         locator = instance(Locator)
         self.locator = locator
@@ -741,18 +768,17 @@ class SyncAPIPublisher(Greenlet):
         nodename = self._get_hostname()
         vaults = model.get_vaults()
         for vault in vaults:
-            locator.register(vault['node'], nodename, vault['id'],
-                             vault['name'], self.server.address)
+            addr = gruvi.getsockname(self.server.transport)
+            locator.register(vault['node'], nodename, vault['id'], vault['name'], addr)
             logger.debug('published node %s', vault['node'])
             self.published_nodes.add(vault['node'])
         stopped = False
         while not stopped:
             timeout = self.allow_pairing_until - time.time() \
                         if self.allow_pairing else None
-            self.queue_notempty.wait(timeout)
-            self.queue_notempty.clear()
-            while self.queue:
-                event, args = self.queue.pop(0)
+            entry = self.queue.get(timeout)
+            if entry:
+                event, args = entry
                 logger.debug('processing event: %s', event)
                 if event == 'allow_pairing':
                     timeout = args[0]
@@ -781,8 +807,9 @@ class SyncAPIPublisher(Greenlet):
                     properties = {}
                     if self.allow_pairing:
                         properties['visible'] = 'true'
+                    addr = gruvi.getsockname(self.server.transport)
                     locator.register(node, nodename, vault['id'], vault['name'],
-                                     self.server.address, properties)
+                                     addr, properties)
                     self.published_nodes.add(node)
                     logger.debug('published node %s', node)
                 elif event == 'VaultRemoved':
@@ -805,5 +832,5 @@ class SyncAPIPublisher(Greenlet):
                 self.allow_pairing_until = None
                 instance(SyncAPIApplication).allow_pairing = False
                 self.raise_event('AllowPairingEnded')
-            logger.debug('done processing queue, sleeping')
+            logger.debug('done processing event')
         logger.debug('shutting down publisher')

@@ -21,7 +21,7 @@ from setuptools import setup, Extension
 
 version_info = {
     'name': 'bluepass',
-    'version': '0.8.dev',
+    'version': '0.9.dev',
     'description': 'The Bluepass password manager.',
     'author': 'Geert Jansen',
     'author_email': 'geertj@gmail.com',
@@ -36,6 +36,7 @@ version_info = {
         'Operating System :: POSIX',
         'Programming Language :: Python :: 2.6',
         'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3.3',
         'Topic :: Security',
         'Topic :: Utilities'
     ],
@@ -77,7 +78,7 @@ def update_manifest():
     cmd = subprocess.Popen(['git', 'ls-tree', '-r', 'master', '--name-only'],
                            stdout=subprocess.PIPE)
     stdout, _ = cmd.communicate()
-    files = stdout.splitlines()
+    files = stdout.decode('ascii').splitlines()
     files.append('bluepass/_version.py')
     lines = ['include {0}\n'.format(fname) for fname in files]
     new = ''.join(sorted(lines))
@@ -149,7 +150,7 @@ def main():
                       libraries=['ssl', 'crypto'], **extargs)
         ],
         package_data = {'bluepass': ['assets/png/*', 'assets/diceware/*']},
-        install_requires = ['greenlet>=0.4.0'],
+        install_requires = [],
         entry_points = {'console_scripts':
                             ['bluepass = bluepass.main:frontend',
                              'bluepass-backend = bluepass.main:backend']},

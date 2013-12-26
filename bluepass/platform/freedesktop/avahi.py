@@ -9,8 +9,9 @@
 import socket
 import logging
 
-from tdbus import DBusHandler, DBusError, signal_handler
-from tdbus import GEventDBusConnection, DBUS_BUS_SYSTEM
+import gruvi
+from gruvi import txdbus, compat
+from gruvi.dbus import DBusClient, DBusError
 from bluepass.locator import ZeroconfLocationSource, LocationError
 
 # We do not import "avahi" because it depends on python-dbus which is
@@ -33,9 +34,8 @@ def encode_txt(txt):
     """Encode dictionary of TXT records to the format expected by Avahi."""
     result = []
     for name,value in txt.items():
-        item = '%s=%s' % (name, value)
-        if isinstance(item, unicode):
-            item = item.encode('utf8')
+        item = '{}={}'.format(name, value)
+        item = list(bytearray(item.encode('utf8')))
         result.append(item)
     return result
 
@@ -43,10 +43,56 @@ def decode_txt(txt):
     """Decode a list of TXT records that we get from Avahi into a dict."""
     result = {}
     for item in txt:
-        item = item.decode('utf8')
+        item = b''.join(map(lambda x: bytes([x]), item)).decode('utf8')
         name, value = item.split('=')
         result[name] = value
     return result
+
+
+def signal_handler(interface=None):
+    """Annotate a method as a D_BUS signal handler."""
+    def _decorate(func):
+        func.signal_handler = True
+        func.member = func.__name__
+        func.interface = interface
+        return func
+    return _decorate
+
+
+class DBusHandler(object):
+    """DBus message handler."""
+
+    def __init__(self):
+        self.signal_handlers = []
+        self.local = gruvi.local()
+        self._init_handlers()
+
+    def _init_handlers(self):
+        for name in vars(self.__class__):
+            handler = getattr(self, name)
+            if getattr(handler, 'signal_handler', False):
+                self.signal_handlers.append(handler)
+
+    @property
+    def protocol(self):
+        return self.local.protocol
+
+    def __call__(self, message, protocol, transport):
+        if not isinstance(message, txdbus.SignalMessage):
+            return
+        for handler in self.signal_handlers:
+            if handler.member != message.member:
+                continue
+            if handler.interface and message.interface != handler.interface:
+                continue
+            break
+        else:
+            return
+        self.local.protocol = protocol
+        try:
+            handler(*message.body)
+        finally:
+            del self.local.protocol
 
 
 class AvahiHandler(DBusHandler):
@@ -59,30 +105,27 @@ class AvahiHandler(DBusHandler):
         self._callback = callback
         self.logger = logging.getLogger(__name__)
 
-    def _call_avahi(self, path, method, interface, format=None, args=None):
+    def _call_avahi(self, path, method, interface, signature=None, args=None):
         """Call into Avahi."""
         try:
-            reply = self.connection.call_method(path, method, interface,
-                            format=format, args=args, destination=DBUS_NAME)
+            reply = self.protocol.call_method(DBUS_NAME, path, interface, method,
+                                              signature=signature, args=args)
         except DBusError as e:
             self.logger.error('D-BUS error for method %s: %s', method, str(e))
         else:
             return reply
 
     @signal_handler(interface=IFACE_SERVICE_BROWSER)
-    def ItemNew(self, message):
-        args = message.get_args()
-        reply = self._call_avahi(PATH_SERVER, 'ServiceResolverNew', IFACE_SERVER,
-                                 'iisssiu', args[:5] + (PROTO_INET, 0))
-        if not reply:
+    def ItemNew(self, *args):
+        resolver = self._call_avahi(PATH_SERVER, 'ServiceResolverNew', IFACE_SERVER,
+                                   'iisssiu', args[:5] + (PROTO_INET, 0))
+        if not resolver:
             return
-        resolver = reply.get_args()[0]
         key = '.'.join(map(str, args[:5]))
         self._resolvers[key] = resolver
 
     @signal_handler(interface=IFACE_SERVICE_BROWSER)
-    def ItemRemove(self, message):
-        args = message.get_args()
+    def ItemRemove(self, *args):
         key = '.'.join(map(str, args[:5]))
         if key not in self._resolvers:
             self.logger.error('ItemRemove signal for unknown service: %s', key)
@@ -92,8 +135,7 @@ class AvahiHandler(DBusHandler):
         self._callback('ItemRemove', *args)
 
     @signal_handler(interface=IFACE_SERVICE_RESOLVER)
-    def Found(self, message):
-        args = message.get_args()
+    def Found(self, *args):
         self._callback('Found', *args)
 
 
@@ -128,9 +170,9 @@ class AvahiLocationSource(ZeroconfLocationSource):
     def __init__(self):
         """Constructor."""
         super(AvahiLocationSource, self).__init__()
-        self.connection = GEventDBusConnection(DBUS_BUS_SYSTEM)
         handler = AvahiHandler(self._avahi_event)
-        self.connection.add_handler(handler)
+        self.client = DBusClient(handler)
+        self.client.connect('system')
         self.logger = logging.getLogger(__name__)
         self.callbacks = []
         self.neighbors = {}
@@ -138,11 +180,11 @@ class AvahiLocationSource(ZeroconfLocationSource):
         self._browser = None
         self._entry_groups = {}
 
-    def _call_avahi(self, path, method, interface, format=None, args=None):
+    def _call_avahi(self, path, method, interface, signature=None, args=None):
         """INTERNAL: call into Avahi."""
         try:
-            reply = self.connection.call_method(path, method, interface,
-                            format=format, args=args, destination=DBUS_NAME)
+            reply = self.client.call_method(DBUS_NAME, path, interface, method,
+                                            signature=signature, args=args)
         except DBusError as e:
             msg = 'Encounted a D-BUS error for method %s: %s'
             self.logger.error(msg, method, str(e))
@@ -181,13 +223,11 @@ class AvahiLocationSource(ZeroconfLocationSource):
                 if not neighbor.get(name):
                     logger.error('node %s lacks TXT field "%s"', node, name)
                     return
-            event = 'NeighborUpdated' if node in self.neighbors \
-                        else 'NeighborDiscovered'
+            event = 'NeighborUpdated' if node in self.neighbors else 'NeighborDiscovered'
             family = self._proto_to_family(args[6])
             if family != socket.AF_INET:
                 return
-            addr = { 'family': family, 'host': args[5],
-                     'addr': (args[7], args[8]) }
+            addr = { 'family': family, 'host': args[5], 'addr': (args[7], args[8]) }
             addr['id'] = '%s:%s:%s' % (family, args[7], args[8])
             # There can be multiple addresses per node for different
             # interfaces and/or address families. We keep track of this
@@ -197,7 +237,7 @@ class AvahiLocationSource(ZeroconfLocationSource):
             if node not in self.addresses:
                 self.addresses[node] = {}
             self.addresses[node][key] = addr
-            neighbor['addresses'] = self.addresses[node].values()
+            neighbor['addresses'] = list(self.addresses[node].values())
             self.neighbors[node] = neighbor
             self._run_callbacks(event, neighbor)
         elif event == 'ItemRemove':
@@ -208,24 +248,21 @@ class AvahiLocationSource(ZeroconfLocationSource):
                 return
             del self.addresses[node][key]
             neighbor = self.neighbors[node]
-            neighbor['addresses'] = self.addresses[node].values()
+            neighbor['addresses'] = list(self.addresses[node].values())
             if not neighbor['addresses']:
                 del self.addresses[node]
                 del self.neighbors[node]
-            event = 'NeighbordUpdated' if node in self.neighbors \
-                        else 'NeighborDisappeared'
+            event = 'NeighbordUpdated' if node in self.neighbors else 'NeighborDisappeared'
             self._run_callbacks(event, neighbor)
 
     def isavailable(self):
         """Return wheter Avahi is available or not."""
         try:
-            reply = self._call_avahi(PATH_SERVER, 'GetVersionString', IFACE_SERVER)
+            version = self._call_avahi(PATH_SERVER, 'GetVersionString', IFACE_SERVER)
         except LocationError:
             return False
-        version = reply.get_args()[0]
         self.logger.info('Found Avahi version %s', version)
-        reply = self._call_avahi(PATH_SERVER, 'GetState', IFACE_SERVER)
-        state = reply.get_args()[0]
+        state = self._call_avahi(PATH_SERVER, 'GetState', IFACE_SERVER)
         if state != SERVER_RUNNING:
             self.logger.error('Avahi not in the RUNNING state (instead: %s)', state)
             return False
@@ -238,26 +275,21 @@ class AvahiLocationSource(ZeroconfLocationSource):
         if self._browser is not None:
             return
         args = (IFACE_UNSPEC, PROTO_INET, self.service, self.domain, 0)
-        reply = self._call_avahi(PATH_SERVER, 'ServiceBrowserNew',
+        self._browser = self._call_avahi(PATH_SERVER, 'ServiceBrowserNew',
                                  IFACE_SERVER, 'iissu', args)
-        self._browser = reply.get_args()[0]
 
-    def register(self, node, nodename, vault, vaultname, address,
-                 properties=None):
+    def register(self, node, nodename, vault, vaultname, address, properties=None):
         """Register a service instance."""
-        reply = self._call_avahi(PATH_SERVER, 'EntryGroupNew', IFACE_SERVER)
-        group = reply.get_args()[0]
-        reply = self._call_avahi(PATH_SERVER, 'GetHostNameFqdn', IFACE_SERVER)
-        host = reply.get_args()[0]
+        group = self._call_avahi(PATH_SERVER, 'EntryGroupNew', IFACE_SERVER)
+        host = self._call_avahi(PATH_SERVER, 'GetHostNameFqdn', IFACE_SERVER)
         port = address[1]
         properties = properties.copy() if properties else {}
         properties['nodename'] = nodename
         properties['vault'] = vault
         properties['vaultname'] = vaultname
-        args = (IFACE_UNSPEC, PROTO_INET, 0, node, self.service,
-                self.domain, host, port, encode_txt(properties))
-        self._call_avahi(group, 'AddService', IFACE_ENTRY_GROUP,
-                         'iiussssqaay', args)
+        args = (IFACE_UNSPEC, PROTO_INET, 0, node, self.service, self.domain,
+                host, port, encode_txt(properties))
+        self._call_avahi(group, 'AddService', IFACE_ENTRY_GROUP, 'iiussssqaay', args)
         self._call_avahi(group, 'Commit', IFACE_ENTRY_GROUP)
         self._entry_groups[node] = (group, properties)
 
@@ -267,10 +299,9 @@ class AvahiLocationSource(ZeroconfLocationSource):
             raise RuntimeError('Node is not registered yet')
         group, properties = self._entry_groups[node]
         properties[name] = value
-        args = (IFACE_UNSPEC, PROTO_INET, 0, node, self.service,
-                self.domain, encode_txt(properties))
-        self._call_avahi(group, 'UpdateServiceTxt', IFACE_ENTRY_GROUP,
-                         'iiusssaay', args)
+        args = (IFACE_UNSPEC, PROTO_INET, 0, node, self.service, self.domain,
+                encode_txt(properties))
+        self._call_avahi(group, 'UpdateServiceTxt', IFACE_ENTRY_GROUP, 'iiusssaay', args)
 
     def unregister(self, node):
         """Release our registration."""

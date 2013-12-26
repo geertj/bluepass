@@ -96,12 +96,14 @@ static PyObject *openssl_Error = NULL;
                 PyModuleDef_HEAD_INIT, name, doc, -1, methods, }; \
             mod = PyModule_Create(&moduledef); \
         } while (0)
+#  define BS "y#"
 #else
 #  define MOD_OK(value)
 #  define MOD_ERROR
 #  define MOD_INITFUNC(name) void init ## name(void)
 #  define INIT_MODULE(mod, name, doc, methods) \
           do { mod = Py_InitModule3(name, methods, doc); } while (0)
+#  define BS "s#"
 #endif
 
 
@@ -172,7 +174,7 @@ openssl_rsa_checkkey(PyObject *self, PyObject *args)
     RSA *rsa = NULL;
     PyObject *Presult = NULL;
 
-    if (!PyArg_ParseTuple(args, "s#:rsa_size", &key, &keylen))
+    if (!PyArg_ParseTuple(args, BS ":rsa_size", &key, &keylen))
         return NULL;
 
     rsa = d2i_RSAPublicKey(NULL, (const unsigned char **) &key, keylen);
@@ -195,7 +197,7 @@ openssl_rsa_size(PyObject *self, PyObject *args)
     RSA *rsa = NULL;
     PyObject *Presult = NULL;
 
-    if (!PyArg_ParseTuple(args, "s#:rsa_size", &key, &keylen))
+    if (!PyArg_ParseTuple(args, BS ":rsa_size", &key, &keylen))
         return NULL;
 
     rsa = d2i_RSAPublicKey(NULL, (const unsigned char **) &key, keylen);
@@ -217,7 +219,7 @@ openssl_rsa_encrypt(PyObject *self, PyObject *args)
     RSA *rsa = NULL;
     PyObject *Pout = NULL;
 
-    if (!PyArg_ParseTuple(args, "s#s#s:rsa_encrypt", &in, &inlen,
+    if (!PyArg_ParseTuple(args, BS BS "s:rsa_encrypt", &in, &inlen,
                           &key, &keylen, &padding))
         return NULL;
     if (strcmp(padding, "oaep"))
@@ -247,7 +249,7 @@ openssl_rsa_decrypt(PyObject *self, PyObject *args)
     RSA *rsa = NULL;
     PyObject *Pout = NULL;
 
-    if (!PyArg_ParseTuple(args, "s#s#s:rsa_decrypt", &in, &inlen,
+    if (!PyArg_ParseTuple(args, BS BS "s:rsa_decrypt", &in, &inlen,
                           &key, &keylen, &padding))
         return NULL;
     if (strcmp(padding, "oaep"))
@@ -279,7 +281,7 @@ openssl_rsa_sign(PyObject *self, PyObject *args)
     const EVP_MD *digest;
     EVP_MD_CTX ctx;
 
-    if (!PyArg_ParseTuple(args, "s#s#s:rsa_sign", &in, &inlen,
+    if (!PyArg_ParseTuple(args, BS BS "s:rsa_sign", &in, &inlen,
                           &key, &keylen, &padding))
         return NULL;
     if (strncmp(padding, "pss-", 4))
@@ -329,7 +331,7 @@ openssl_rsa_verify(PyObject *self, PyObject *args)
     EVP_MD_CTX ctx;
     const EVP_MD *digest;
 
-    if (!PyArg_ParseTuple(args, "s#s#s#s:rsa_verify", &in, &inlen,
+    if (!PyArg_ParseTuple(args,  BS BS BS "s:rsa_verify", &in, &inlen,
                           &sig, &siglen, &key, &keylen, &padding))
         return NULL;
     if (strncmp(padding, "pss-", 4))
@@ -408,7 +410,7 @@ openssl_dh_checkparams(PyObject *self, PyObject *args)
     DH *dh = NULL;
     PyObject *Presult = NULL;
 
-    if (!PyArg_ParseTuple(args, "s#:dh_checkparams", &params, &paramslen))
+    if (!PyArg_ParseTuple(args, BS ":dh_checkparams", &params, &paramslen))
         return NULL;
 
     dh = d2i_DHparams(NULL, (const unsigned char **) &params, paramslen);
@@ -431,7 +433,7 @@ openssl_dh_size(PyObject *self, PyObject *args)
     DH *dh = NULL;
     PyObject *Presult = NULL;
 
-    if (!PyArg_ParseTuple(args, "s#:dh_size", &params, &paramslen))
+    if (!PyArg_ParseTuple(args, BS ":dh_size", &params, &paramslen))
         return NULL;
 
     dh = d2i_DHparams(NULL, (const unsigned char **) &params, paramslen);
@@ -455,7 +457,7 @@ openssl_dh_genkey(PyObject *self, PyObject *args)
     DH *dh = NULL;
     PyObject *Presult = NULL, *Pprivkey = NULL, *Ppubkey = NULL;
 
-    if (!PyArg_ParseTuple(args, "s#:dh_genkey", &params, &paramslen))
+    if (!PyArg_ParseTuple(args, BS ":dh_genkey", &params, &paramslen))
         return NULL;
 
     dh = d2i_DHparams(NULL, (const unsigned char **) &params, paramslen);
@@ -499,7 +501,7 @@ openssl_dh_checkkey(PyObject *self, PyObject *args)
     DH *dh = NULL;
     PyObject *Presult = NULL;
 
-    if (!PyArg_ParseTuple(args, "s#s#:dh_checkkey", &params, &paramslen,
+    if (!PyArg_ParseTuple(args, BS BS ":dh_checkkey", &params, &paramslen,
                           &pubkey, &publen))
         return NULL;
 
@@ -527,7 +529,7 @@ openssl_dh_compute(PyObject *self, PyObject *args)
     DH *dh = NULL;
     PyObject *Presult = NULL;
 
-    if (!PyArg_ParseTuple(args, "s#s#s#:dh_compute", &params, &paramslen,
+    if (!PyArg_ParseTuple(args,  BS BS BS ":dh_compute", &params, &paramslen,
                           &privkey, &privlen, &pubkey, &publen))
             return NULL;
 
@@ -569,7 +571,7 @@ openssl_aes_encrypt(PyObject *self, PyObject *args)
     AES_KEY key;
     PyObject *Pout = NULL;
 
-    if (!PyArg_ParseTuple(args, "s#s#s#s:aes_encrypt", &in, &inlen,
+    if (!PyArg_ParseTuple(args, BS BS BS "s:aes_encrypt", &in, &inlen,
                           &ukey, &ukeylen, &iv, &ivlen, &mode))
         return NULL;
     if ((ukeylen != 16) && (ukeylen != 24) && (ukeylen != 32))
@@ -612,7 +614,7 @@ openssl_aes_decrypt(PyObject *self, PyObject *args)
     AES_KEY key;
     PyObject *Pout = NULL;
 
-    if (!PyArg_ParseTuple(args, "s#s#s#s:aes_decrypt", &in, &inlen,
+    if (!PyArg_ParseTuple(args, BS BS BS "s:aes_decrypt", &in, &inlen,
                           &ukey, &ukeylen, &iv, &ivlen, &mode))
         return NULL;
     if ((inlen == 0) || (inlen % 16))
@@ -874,7 +876,7 @@ _openssl_insert_random_bytes(PyObject *self, PyObject *args)
     RAND_METHOD *meth;
     PyObject *Pret = NULL;
 
-    if (!PyArg_ParseTuple(args, "s#:_insert_random_bytes", &buf, &buflen))
+    if (!PyArg_ParseTuple(args, BS ":_insert_random_bytes", &buf, &buflen))
         return NULL;
 
     if (_openssl_unrandom_bytes != NULL)

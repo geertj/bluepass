@@ -11,15 +11,18 @@ import math
 import logging
 import itertools
 import socket
+import uuid
 
 from bluepass.error import StructuredError
 from bluepass.crypto import CryptoProvider, CryptoError
 from bluepass.util import json, base64
 from bluepass.util.uuid import check_uuid4
-from bluepass.util.selfpipe import SelfPipeEvent
 from bluepass import platform
 
 import hashlib
+
+import gruvi
+from gruvi import compat
 
 __all__ = ('Model', 'ModelError')
 
@@ -320,7 +323,7 @@ class Model(object):
             log.error('unknown signature algo "%s" for item "%s"',
                       algo, item['id'])
             return False
-        message = json.dumps_c14n(item)
+        message = json.dumps_c14n(item).encode('utf8')
         blob = base64.decode(signature['blob'])
         try:
             status = self.crypto.rsa_verify(message, blob, pubkey, 'pss-sha256')
@@ -528,8 +531,8 @@ class Model(object):
             versions.append(item)
         self._update_version_cache(versions, notify=False)
         cursize = len(self._version_cache[vault])
-        linsize = sum((len(h) for h in self._linear_history[vault].iteritems()))
-        fullsize = sum((len(h) for h in self._full_history[vault].iteritems()))
+        linsize = sum((len(h) for h in self._linear_history[vault].items()))
+        fullsize = sum((len(h) for h in self._full_history[vault].items()))
         log = self.logger
         log.debug('loaded %d versions from vault %s', cursize, vault)
         log.debug('linear history contains %d versions', linsize)
@@ -541,7 +544,7 @@ class Model(object):
         assert vault in self._private_keys
         signature = {}
         signature['algo'] = 'rsa-pss-sha256'
-        message = json.dumps_c14n(item)
+        message = json.dumps_c14n(item).encode('utf8')
         signkey = self._private_keys[vault][0]
         blob = self.crypto.rsa_sign(message, signkey, padding='pss-sha256')
         signature['blob'] = base64.encode(blob)
@@ -574,7 +577,7 @@ class Model(object):
         iv = crypto.random(16)
         payload['iv'] = base64.encode(iv)
         symkey = crypto.random(16)
-        message = json.dumps(clear)
+        message = json.dumps(clear).encode('utf8')
         blob = crypto.aes_encrypt(message, symkey, iv, mode='cbc-pkcs7')
         payload['blob'] = base64.encode(blob)
         payload['keyalgo'] = 'rsa-oaep'
@@ -619,7 +622,7 @@ class Model(object):
         except CryptoError as e:
             log.error('could not decrypt encrypted payload in item %s: %s' % (item['id'], str(e)))
             return False
-        payload = json.try_loads(clear)
+        payload = json.try_loads(clear.decode('utf8'))
         if payload is None:
             log.error('illegal JSON in decrypted payload in item %s', item['id'])
             return False
@@ -710,48 +713,16 @@ class Model(object):
 
     def _create_vault_keys(self, password):
         """Create all 3 vault keys (sign, encrypt and auth)."""
-        # Key generation is CPU intensive and would block gevent. We therefore
-        # generate the keys in a separate thread. If we have more than 1 core
-        # we generate the keys in two parallel threads as the C exension module
-        # for openssl enables threads when generating keys and so the GIL is
-        # not limiting us to 1 concurrent thread. Also make sure to import
-        # threading late so that monkey gets a chance to patch the time module
-        # making Thread.join() cooperative.
-        #
-        # Only measure the PBKDF2 speed once, not once per thread
+        # Generate keys in the CPU thread pool.
         prf = 'hmac-sha256' if self.crypto.pbkdf2_prf_available('hmac-sha256') \
                     else 'hmac-sha1'
         dummy = self.crypto.pbkdf2_speed(prf)
-        keys = {}
-        keys_ready = SelfPipeEvent()
-        if hasattr(platform, 'get_machine_info'):
-            cores = platform.get_machine_info()[3]
-        else:
-            cores = 1  # fallback assumption
-        nthreads = min(cores, 3)
-        keys_needed = [('sign', True), ('encrypt', True), ('auth', False)]
-        def create_keys():
-            while True:
-                try:
-                    keytype, encrypt = keys_needed.pop()
-                except IndexError:
-                    break
-                keydata = self._create_vault_key(password if encrypt else '')
-                keys[keytype] = keydata
-            if not keys_needed:
-                keys_ready.set()
-        from threading import Thread
-        threads = [ Thread(target=create_keys) for i in range(nthreads) ]
-        start = time.time()
-        self.logger.debug('generating 3 keys with %d threads', nthreads)
-        for thread in threads:
-            thread.start()
-        keys_ready.wait()
-        for thread in threads:
-            thread.join()
-        end = time.time()
-        self.logger.debug('key generation took %.2f seconds', end - start)
-        keys_ready.close()
+        pool = gruvi.ThreadPool.get_cpu_pool()
+        fsign = pool.submit(self._create_vault_key, password)
+        fencrypt = pool.submit(self._create_vault_key, password)
+        fauth = pool.submit(self._create_vault_key, '')
+        keys = { 'sign': fsign.result(), 'encrypt': fencrypt.result(),
+                 'auth': fauth.result() }
         return keys
   
     # Events / callbacks
@@ -798,16 +769,16 @@ class Model(object):
         arguments determines wether or not callbacks must be called when this
         vault is created.
         """
-        if not isinstance(name, (unicode, str)):
+        if not isinstance(name, compat.string_types):
             raise ModelError('InvalidArgument', '"name" must be str/unicode')
-        if not isinstance(password, (unicode, str)):
+        if not isinstance(password, compat.string_types):
             raise ModelError('InvalidArgument', '"password" must be str/unicode')
         if uuid is not None:
             if not check_uuid4(uuid):
                 raise ModelError('InvalidArgument', 'Illegal vault uuid')
             if uuid in self.vaults:
                 raise ModelError('Exists', 'A vault with this UUID already exists')
-        if isinstance(password, unicode):
+        if isinstance(password, compat.text_type):
             password = password.encode('utf8')
         vault = {}
         if uuid is None:
@@ -893,9 +864,9 @@ class Model(object):
         stats = {}
         stats['current_versions'] = len(self._version_cache[uuid])
         stats['total_versions'] = len(self._linear_history[uuid])
-        linsize = sum((len(h) for h in self._linear_history[uuid].iteritems()))
+        linsize = sum((len(h) for h in self._linear_history[uuid].items()))
         stats['linear_history_size'] = linsize
-        fullsize = sum((len(h) for h in self._full_history[uuid].iteritems()))
+        fullsize = sum((len(h) for h in self._full_history[uuid].items()))
         stats['full_history_size'] = fullsize
         result = self.database.execute('items', """
                     SELECT COUNT(*) FROM items WHERE $vault = ?
@@ -924,14 +895,14 @@ class Model(object):
         """
         if not check_uuid4(uuid):
             raise ModelError('InvalidArgument', 'Illegal vault uuid')
-        if not isinstance(password, (str, unicode)):
+        if not isinstance(password, compat.string_types):
             raise ModelError('InvalidArgument', 'Illegal password')
         if uuid not in self.vaults:
             raise ModelError('NotFound', 'No such vault')
         assert uuid in self._private_keys
         if len(self._private_keys[uuid]) > 0:
             return
-        if isinstance(password, unicode):
+        if isinstance(password, compat.text_type):
             password = password.encode('utf8')
         log = self.logger
         crypto = self.crypto
@@ -1232,7 +1203,7 @@ class Model(object):
             for elem in vector:
                 if not isinstance(elem, (tuple, list)) or len(elem) != 2 or \
                         not check_uuid4(elem[0]) or \
-                        not isinstance(elem[1], (int, long)):
+                        not isinstance(elem[1], compat.integer_types):
                     raise ModelError('InvalidArgument', 'Illegal vector')
         if vault not in self.vaults:
             raise ModelError('NotFound', 'no such vault')

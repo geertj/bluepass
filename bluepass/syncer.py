@@ -9,8 +9,8 @@
 import time
 import logging
 
-from gevent import Greenlet
-from gevent.event import Event
+import gruvi
+from gruvi import Fiber
 
 from bluepass.factory import instance
 from bluepass.model import Model
@@ -18,7 +18,7 @@ from bluepass.locator import Locator
 from bluepass.syncapi import SyncAPIClient, SyncAPIError
 
 
-class Syncer(Greenlet):
+class Syncer(Fiber):
     """Syncer.
     
     The syncer is an component that is responsible for inbound/outbound
@@ -31,17 +31,15 @@ class Syncer(Greenlet):
 
     def __init__(self):
         """Constructor."""
-        super(Syncer, self).__init__()
+        super(Syncer, self).__init__(target=self._run)
         self.logger = logging.getLogger(__name__)
-        self.queue = []
-        self.queue_notempty = Event()
+        self.queue = gruvi.Queue()
         self.neighbors = {}
         self.last_sync = {}
 
     def _event_callback(self, event, *args):
         """Store events and wake up the main loop."""
-        self.queue.append((event, args))
-        self.queue_notempty.set()
+        self.queue.put((event, args))
 
     def set_last_sync(self, node, time):
         """Set the last_sync time for `node` to `time`."""
@@ -70,8 +68,7 @@ class Syncer(Greenlet):
                 last_sync = self.last_sync.get(node, 0)
                 timeout = min(timeout, max(0, last_sync + self.interval - now))
             # Now wait for a timeout, or an event.
-            self.queue_notempty.wait(timeout)
-            self.queue_notempty.clear()
+            entry = self.queue.get(timeout)
             # Build a list of nodes that we need to sync with.
             #
             # We sync to nodes that are are not ours, whose vault we also
@@ -94,8 +91,8 @@ class Syncer(Greenlet):
             sync_nodes = set()
             sync_vaults = set()
             # First process events.
-            while self.queue:
-                event, args = self.queue.pop(0)
+            if entry:
+                event, args = entry
                 if event == 'NeighborDiscovered':
                     neighbor = args[0]
                     # As an optimization do not sync with new neighbors that
@@ -149,7 +146,7 @@ class Syncer(Greenlet):
             # we will be able to give different priorites to different sources
             # later.
             nnodes = nconnections = 0
-            addresses = sorted(byaddress.itervalues(), key=lambda x: x[0])
+            addresses = sorted(byaddress.values(), key=lambda x: x[0])
             for source,addr,neighbors in addresses:
                 client = None
                 for neighbor in neighbors:
@@ -158,9 +155,9 @@ class Syncer(Greenlet):
                         continue  # already synced
                     logger.debug('syncing with node %s', node)
                     if client is None:
-                        client = SyncAPIClient(addr)
+                        client = SyncAPIClient()
                         try:
-                            client.connect()
+                            client.connect(addr['addr'])
                         except SyncAPIError as e:
                             logger.error('could not connect to %s: %s',
                                           addr, str(e))

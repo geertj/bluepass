@@ -13,7 +13,6 @@ import sys
 # Unix like operating systems
 
 if hasattr(os, 'fork'):
-    from gevent import socket
     from bluepass.platform.posix import errno
     from bluepass.platform.posix.misc import *
     if sys.platform == 'linux2':
@@ -21,13 +20,12 @@ if hasattr(os, 'fork'):
     elif sys.platform == 'darwin':
         from bluepass.platform.darwin.misc import *
 
-    default_listen_address = os.path.join(get_sockdir(), 'bluepass.sock')
+    #default_listen_address = os.path.join(get_sockdir(), 'bluepass-dev.sock')
+    default_listen_address = 'localhost:0'
 
 # Windows
 
 elif sys.platform in ('win32',):
-    from bluepass.platform.windows import socket
-
     default_listen_address = 'localhost:0'
 
 

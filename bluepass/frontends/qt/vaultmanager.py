@@ -596,8 +596,7 @@ class CreateVault(Page):
         else:
             status = '<i>Could not create vault: %s</i>' % detail.get('error_message')
             self.status.setText(status)
-            self.logger.error('%s\n%s' % (detail.get('error_message'),
-                                          detail.get('error_detail')))
+            self.logger.error('%s\n%s' % (detail.get('message'), detail.get('data')))
         self.createbtn.setEnabled(True)
         self.uuid = None
 
@@ -608,7 +607,7 @@ class CreateVault(Page):
         if status == 'OK':
             self.done()
         else:
-            self.showPopup('<i>Error: %s</i>' % detail['error_detail'],
+            self.showPopup('<i>Error: %s</i>' % detail['data'],
                            minimum_show=2000, autohide=2000)
         self.createbtn.setEnabled(True)
         self.cookie = None
@@ -800,7 +799,7 @@ class ShowNeighbors(Page):
             page.cookie = cookie
             vaultmgr.showPage(page)
         else:
-            self.showPopup('<i>Error: %s</i>' % detail['error_detail'],
+            self.showPopup('<i>Error: %s</i>' % detail['data'],
                            minimum_show=2000, autohide=2000)
             self.hidePopup()
         self.connectbtn.setEnabled(True)

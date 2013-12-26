@@ -10,10 +10,13 @@ from __future__ import absolute_import, print_function
 
 import os
 import sys
+import binascii
 from subprocess import Popen, PIPE
 
 from .unit import UnitTest, assert_raises, SkipTest
 from bluepass.crypto import CryptoProvider, CryptoError, dhparams
+
+from gruvi import compat
 
 
 class CryptoTest(UnitTest):
@@ -40,7 +43,7 @@ class CryptoTest(UnitTest):
             if '=' not in line or not vectors:
                 raise RuntimeError('Illegal test vector format: %s' % fname)
             key, value = line.split('=')
-            value = value.decode('hex')
+            value = binascii.unhexlify(value)
             vectors[-1][key] = value
         return vectors
 
@@ -56,10 +59,10 @@ class TestCrypto(CryptoTest):
     def test_rsa_encrypt(self):
         cp = self.provider
         for keysize,key in self.rsakeys:
-            for size in range(keysize/8 - 41):
+            for size in range(keysize//8 - 41):
                 pt = os.urandom(size)
                 ct = cp.rsa_encrypt(pt, key[1])
-                assert len(ct) == keysize/8
+                assert len(ct) == keysize//8
                 pt2 = cp.rsa_decrypt(ct, key[0])
                 assert pt == pt2
 
@@ -162,13 +165,13 @@ class TestCrypto(CryptoTest):
         vectors = self.load_vectors('vectors/hkdf.txt', start='PASSWORD')
         for vector in vectors:
             key = cp.hkdf(vector['PASSWORD'], vector['SALT'], vector['INFO'],
-                              int(vector['KEYLEN']), vector['HASH'])
+                              int(vector['KEYLEN']), vector['HASH'].decode('ascii'))
             assert key == vector['KEY']
 
     def test_random_bytes(self):
         cp = self.provider
         rnd = cp.random(10)
-        assert isinstance(rnd, str)
+        assert isinstance(rnd, bytes)
         assert len(rnd) == 10
 
     def test_random_with_alphabet(self):
@@ -178,7 +181,7 @@ class TestCrypto(CryptoTest):
         assert len(rnd) == 10
         assert rnd.isdigit()
         rnd = cp.random(10, u'0123456789')
-        assert isinstance(rnd, unicode)
+        assert isinstance(rnd, compat.text_type)
         assert len(rnd) == 10
         assert rnd.isdigit()
         rnd = cp.random(5, ['01', '23', '45', '67', '89'])
@@ -190,6 +193,6 @@ class TestCrypto(CryptoTest):
         assert len(rnd) == 14
         assert rnd.isdigit()
         rnd = cp.random(5, [u'01', u'23', u'45', u'67', u'89'], u'0')
-        assert isinstance(rnd, unicode)
+        assert isinstance(rnd, compat.text_type)
         assert len(rnd) == 14
         assert rnd.isdigit()

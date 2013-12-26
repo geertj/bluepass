@@ -10,20 +10,15 @@ import sys
 import socket
 import inspect
 import traceback
-from fnmatch import fnmatch
-
-import gevent
-from gevent import core, local
-from gevent.hub import get_hub, Waiter
-from gevent.server import StreamServer
 
 from bluepass.error import StructuredError
 from bluepass.platform import errno
-from bluepass.util import base64, json, logging
+from bluepass.util import json, logging
+
+import gruvi
 
 __all__ = ('MessageBusError', 'MessageBusConnectionBase',
-           'MessageBusConnection', 'MessageBusHandler', 'MessageBusServer',
-           'method', 'signal_handler')
+           'MessageBusHandler', 'method', 'signal_handler')
 
 
 class MessageBusError(StructuredError):
@@ -75,7 +70,7 @@ class MessageBusConnectionBase(object):
     max_incoming_messages = 100
 
     Loop = None
-    Local = type('Object', (object,), {})
+    Local = gruvi.local
 
     def __init__(self, socket, authtoken, handler=None, server=None):
         """Create a new message bus connection.
@@ -184,7 +179,7 @@ class MessageBusConnectionBase(object):
                 logger.error('peer disconnected')
                 self.close()
                 break
-            self._inbuf += buf.decode('ascii')
+            self._inbuf += buf.decode('utf8')
         if self._incoming:
             self.loop.create_callback(self.dispatch)
 
@@ -197,7 +192,7 @@ class MessageBusConnectionBase(object):
                     break
                 if self.tracefile is not None:
                     self._do_trace(self._outgoing[0], False)
-                self._outbuf = self._outgoing.pop(0).encode('ascii')
+                self._outbuf = self._outgoing.pop(0).encode('utf8')
             try:
                 nbytes = self.socket.send(self._outbuf)
             except socket.error as e:
@@ -288,10 +283,7 @@ class MessageBusConnectionBase(object):
             raise TypeError('Expecting a StructuredError instance for "error"')
         reply = { 'jsonrpc': '2.0' }
         reply['id'] = message['id']
-        err = error.asdict()
-        reply['error'] = { 'code': err['error_name'],
-                           'message': err['error_message'],
-                           'data': err['error_detail'] }
+        reply['error'] = error.asdict()
         self.push_outgoing(reply, **kwargs)
 
     def send_signal(self, signal, *args, **kwargs):
@@ -340,10 +332,7 @@ class MessageBusConnectionBase(object):
                 error = { 'jsonrpc': '2.0' }
                 error['id'] = message['id']
                 err = StructuredError('Timeout', 'Method call timed out')
-                err = err.asdict()
-                error['error'] = { 'code': err['error_name'],
-                                   'message': err['error_message'],
-                                   'data': err['error_detail'] }
+                error['error'] = err.asdict()
                 del self.method_calls[message['id']]
                 callback(error)
             else:
@@ -352,73 +341,6 @@ class MessageBusConnectionBase(object):
         timeout = kwargs.get('timeout', self.timeout)
         timer = self.loop.create_timer(timeout, method_return_callback)
         self.method_calls[message['id']] = method_return_callback
-
-
-class GEventLoop(object):
-    """Event loop integration for GEvent."""
-
-    READ = core.READ
-    WRITE = core.WRITE
-
-    def create_watch(self, socket, type, callback):
-        socket.setblocking(0)
-        event = get_hub().loop.io(socket.fileno(), type)
-        event.start(callback)
-        return (event, callback)
-
-    def enable_watch(self, watch):
-        if not watch[0].active:
-            watch[0].start(watch[1])
-
-    def disable_watch(self, watch):
-        if watch[0].active:
-            watch[0].stop()
-
-    def create_timer(self, timeout, callback, *args):
-        timer = get_hub().loop.timer(timeout)
-        timer.start(callback, *args)
-        return timer
-
-    def cancel_timer(self, timer):
-        timer.stop()
-
-    def create_callback(self, callback, *args):
-        get_hub().loop.run_callback(callback, *args)
-
-
-class MessageBusConnection(MessageBusConnectionBase):
-    """Message bus connection for GEvent. This enables GEvent event loop
-    integration for the connection. In addition:
-
-     * This class overrides spawn() to that handlers are run in a new greenlet
-     * This class modifies call_method() so that if no callback is provided we
-       wait for the result
-    """
-
-    Loop = GEventLoop
-    Local = local.local
-
-    def spawn(self, handler, *args):
-        """Spawn a handler in a new greenlet."""
-        gevent.spawn(handler, *args)
-
-    def call_method(self, method, *args, **kwargs):
-        """Call a method and wait for its to return."""
-        callback = kwargs.get('callback')
-        if callback is not None:
-            return super(MessageBusConnection, self). \
-                        call_method(method, *args, **kwargs)
-        waiter = Waiter()
-        def method_return_callback(message):
-            waiter.switch(message)
-        kwargs['callback'] = method_return_callback
-        super(MessageBusConnection, self).call_method(method, *args, **kwargs)
-        reply = waiter.get()
-        if 'error' in reply:
-            raise MessageBusError(reply['error']['code'],
-                                  reply['error'].get('data'))
-        value = reply.get('result')
-        return value
 
 
 def method(**kwargs):
@@ -448,7 +370,7 @@ class MessageBusHandler(object):
     There will be just one instance of this handler across all message bus
     connections. This allows us to more easily share state across the different
     frontend connections. Connection specific data needs to be stored in the
-    "local" attribuet which is a gevent "local.local" object.
+    "local" attribute which is a gruvi "local.local" object.
     """
 
     def __init__(self):
@@ -503,7 +425,7 @@ class MessageBusHandler(object):
         logger = self.logger
         name = message['method']
         if name not in self.methods:
-            error = MessageBusError('NotFound', 'No such method call')
+            error = MessageBusError('NotFound', 'No such method call: {}'.format(name))
             connection.send_error(message, error)
             return
         handler = self.methods[name]
@@ -553,9 +475,9 @@ class MessageBusHandler(object):
             self.local = connection.Local()
         self.local.message = message
         self.local.connection = connection
-        if 'id' in message and 'method' in message:
+        if message.get('id') is not None and 'method' in message:
             self._dispatch_method_call(message, connection)
-        elif 'id' not in message and 'method' in message:
+        elif message.get('id') is None and 'method' in message:
             self._dispatch_signal(message, connection)
 
     def early_response(self, value=None):
@@ -580,90 +502,3 @@ class MessageBusHandler(object):
         if 'id' not in self.message:
             raise RuntimeError('You cannot use delay_response() for a signal')
         self.local.response_sent = True
-
-
-class MessageBusServer(StreamServer):
-    """A server that handles multiple message bus clients."""
-
-    name = 'server'
-    client_name = 'client-%d'
-
-    def __init__(self, listener, authtoken, handler):
-        """Constructor."""
-        self.tracefile = None
-        self.callbacks = []
-        self.connections = []
-        self.client_count = 0
-        self.next_serial = 1
-        def handle_connection(socket, address):
-            connection = MessageBusConnection(socket, authtoken, handler, self)
-            connection.set_trace(self.tracefile)
-            connection.add_callback(self._connection_event)
-            self.connections.append(connection)
-            self.client_count += 1
-        super(MessageBusServer, self). \
-                __init__(listener, handle_connection, spawn=None)
-
-    def set_trace(self, tracefile):
-        """Enable tracing. This will dump messages that are exchanged over
-        the message bus to the file `tracefile`.
-        """
-        self.tracefile = tracefile
-        for conn in self.connections:
-            conn.set_trace(tracefile)
-
-    def _run_callbacks(self, event, *args):
-        """Run all callbacks."""
-        for callback in self.callbacks:
-            callback(event, *args)
-
-    def _connection_event(self, event, *args):
-        """Callback for client events."""
-        if event == 'ConnectionClosed':
-            self.connections.remove(args[0])
-        self._run_callbacks(event, *args)
-        if len(self.connections) == 0:
-            self._run_callbacks('LastConnectionClosed')
-
-    def add_callback(self, callback):
-        """Set a callback that is invokved when a child connection is closed."""
-        self.callbacks.append(callback)
-
-    def get_client(self, name):
-        """Return the client with connection `name`. The client name may
-        be contain fnmatch() style wildcards.
-        """
-        for connection in self.connections:
-            if fnmatch(connection.peer_name, name):
-                return connection
-
-    def send_signal(self, client, name, *args):
-        """Emit a signal to one or all connected clients. The `client` argument
-        may contain fnmatch() style wildcards."""
-        for connection in self.connections:
-            if client is None or fnmatch(connection.peer_name, client):
-                connection.send_signal(name, *args)
-
-    def call_method(self, client, name, *args, **kwargs):
-        """Performs a method call to one or all clients. In case the
-        call is to multiple clients, the first response wins.
-        """
-        waiter = Waiter()
-        def method_return_callback(message):
-            waiter.switch(message)
-        kwargs['callback'] = method_return_callback
-        for connection in self.connections:
-            if client is None or fnmatch(connection.peer_name, client):
-                connection.call_method(name, *args, **kwargs)
-        reply = waiter.get()
-        if 'error' in reply:
-            raise MessageBusError(reply['error']['code'],
-                                  reply['error'].get('data'))
-        value = reply.get('result')
-        return value
-
-    def stop(self):
-        """Stop the server and close all connections."""
-        super(MessageBusServer, self).stop()
-        for connection in self.connections:
-            connection.close()

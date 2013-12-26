@@ -6,23 +6,43 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
+from __future__ import absolute_import
+
+import base64
 import binascii
+from gruvi import compat
 
 Error = binascii.Error
 
 
-def encode(s):
+# Types are as follows:
+#
+# Encode: bytes -> str
+# Decode: str -> bytes
+#
+# Note this is different from the stdlib where base64 always works on bytes,
+# and returns bytes. The types below make more sense to us because we always
+# store the result of a base64 encoding in a dict that will be converted to
+# JSON, which is unicode based.
+
+def encode(b):
     """Encode a string into base-64 encoding."""
-    return binascii.b2a_base64(s).rstrip()
+    if not isinstance(b, compat.binary_type):
+        raise TypeError('expecting bytes')
+    return base64.b64encode(b).decode('ascii')
 
 def decode(s):
     """Decode a base-64 encoded string."""
-    return binascii.a2b_base64(s)
+    if not isinstance(s, compat.string_types):
+        raise TypeError('expecting string')
+    return base64.b64decode(s)
 
 def check(s):
     """Check that `s' is a properly encoded base64 string."""
+    if not isinstance(s, compat.string_types):
+        raise TypeError('expecting string')
     try:
-        binascii.b2a_base64(s)
+        base64.b64decode(s, validate=True)
     except binascii.Error:
         return False
     return True
@@ -30,6 +50,6 @@ def check(s):
 def try_decode(s):
     """Decode a base64 string and return None if there was an error."""
     try:
-        return binascii.a2b_base64(s)
+        return decode(s)
     except binascii.Error:
         pass

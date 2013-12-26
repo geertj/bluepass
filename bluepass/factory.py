@@ -10,7 +10,7 @@
 def instance(typ):
     """Return the singleton instance of a type."""
     if not hasattr(typ, 'instance'):
-        raise RuntimeError('instance not created yet')
+        typ.instance = typ()
     return typ.instance
 
 

@@ -81,9 +81,9 @@ class StructuredError(Error):
 
     def asdict(self):
         """Return the error as a dictionary."""
-        d = { 'error_name': self.error_name,
-              'error_message': self.error_message,
-              'error_detail': self.error_detail }
+        d = { 'code': self.error_name,
+              'message': self.error_message,
+              'data': self.error_detail }
         return d
 
     @classmethod

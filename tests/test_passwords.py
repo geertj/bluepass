@@ -22,7 +22,7 @@ class TestPasswordGenerator(UnitTest):
     def test_generate_random(self):
         gen = self.generator
         pw = gen.generate('random', 20)
-        assert isinstance(pw, str)
+        assert isinstance(pw, bytes)
         assert len(pw) == 20
         pw = gen.generate('random', 20, 'ab')
         assert isinstance(pw, str)

@@ -199,7 +199,7 @@ class TestModel(UnitTest):
         assert events[0] == ('VersionsAdded', (vault['id'], [version]))
         del version['foo']
         version['deleted'] = True
-        model.delete_version(vault['id'], version)
+        version = model.delete_version(vault['id'], version)
         assert len(events) == 2
         assert events[1] == ('VersionsAdded', (vault['id'], [version]))
 

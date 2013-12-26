@@ -6,12 +6,9 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
-try:
-    import httplib
-except ImportError:
-    from http import client as httplib
+import ssl
+import socket
 
-from gevent import socket, ssl
 from bluepass.ext import _sslex
 
 
@@ -23,11 +20,13 @@ class SSLSocket(ssl.SSLSocket):
     * Retrieving the channel bindings (get_channel_bindings()).
     * Setting the Diffie-Hellman group parameters (via the "dhparams"
        and dh_single_use keyword arguments to the constructor).
+
+    This whole thing is a horrible hack. Luckly we don't need it on Python 3.
     """
 
     def __init__(self, *args, **kwargs):
         """Constructor."""
-        # Below we have a horrible hack... Python's _ssl.sslwrap() requires
+        # Below an even more disgusting hack.. Python's _ssl.sslwrap() requires
         # keyfile and certfile to be set for server sockets. However in case we
         # use anonymous Diffie-Hellman, we don't need these. The "solution" is
         # to force the socket to be a client socket for the purpose of the
@@ -60,32 +59,12 @@ class SSLSocket(ssl.SSLSocket):
         return _sslex.get_channel_binding(self._sslobj)
 
 
-def wrap_socket(*args, **kwargs):
-    return SSLSocket(*args, **kwargs)
-
-
-class HTTPSConnection(httplib.HTTPConnection):
-    """HTTPS connection that uses our extended SSLSocket."""
-
-    default_port = httplib.HTTPS_PORT
-
-    def __init__(self, host, port=None, sockinfo=None, **ssl_args):
-        httplib.HTTPConnection.__init__(self, host, port)
-        self.sockinfo = sockinfo
-        self.ssl_args = ssl_args
-        self.timeout = socket.getdefaulttimeout()
-
-    def connect(self):
-        if self.sockinfo is not None:
-            si = self.sockinfo
-            sock = socket.socket(si.get('family', socket.AF_INET),
-                        si.get('type', socket.SOCK_STREAM), si.get('proto', 0))
-            if self.timeout:
-                sock.settimeout(self.timeout)
-            sock.connect(si['addr'])
-        else:
-            sock = socket.create_connection((self.host, self.port))
-        if self._tunnel_host:
-            self.sock = sock
-            self._tunnel()
-        self.sock = wrap_socket(sock, **self.ssl_args)
+def patch_gruvi_ssl():
+    """Monkey patch gruvi.ssl to use our extended SSL socket."""
+    from gruvi import compat
+    if compat.PY3:
+        return
+    import gruvi.ssl
+    def wrap_socket(*args, **kwargs):
+        return SSLSocket(*args, **kwargs)
+    gruvi.ssl.wrap_socket = wrap_socket

@@ -11,6 +11,8 @@ import stat
 import errno
 import socket
 
+import gruvi.util
+
 
 def asset(*path):
     """Return the path of an asset specified by *path*."""
@@ -42,28 +44,13 @@ def gethostname():
 
 
 def parse_address(s):
-    """Parse a string form of a socket address.
-
-    If the string is in the format of ``'host:port'``, then it is an IPv4/v6
-    address and a (host, port) tuple is returned. Otherwise, the address is
-    assumed to be an AF_UNIX path name, and it is returned verbatim.
-    """
-    if ':' in s:
-        pos = s.rfind(':')
-        host, port = s[:pos], s[pos+1:]
-        addr = (host, int(port))
-    else:
-        addr = s
-    return addr
+    """Parse a string form of a socket address."""
+    return gruvi.util.paddr(s)
 
 
 def unparse_address(address):
     """Convert a socket address into a string form."""
-    if isinstance(address, tuple):
-        s = '{0[0]}:{0[1]}'.format(address)
-    else:
-        s = address
-    return s
+    return gruvi.util.saddr(address)
 
 
 def create_connection(address, timeout=None):

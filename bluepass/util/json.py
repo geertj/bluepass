@@ -11,6 +11,7 @@ from __future__ import absolute_import
 import six
 from json import *
 import itertools
+from gruvi import compat
 
 
 def dumps_c14n(obj):
@@ -22,7 +23,9 @@ def try_loads(s, cls=None):
     """Load the JSON object in `s` or return None in case there is an error."""
     try:
         obj = loads(s)
-    except Exception:
+    except Exception as e:
+        print(repr(s))
+        raise
         return
     if cls is not None and not isinstance(obj, cls):
         return

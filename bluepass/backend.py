@@ -12,9 +12,8 @@ import stat
 import signal
 import logging
 
-from gevent import monkey
-from gevent.hub import get_hub
-from gevent.event import Event
+import pyuv
+import gruvi
 
 from bluepass import platform
 from bluepass.factory import singleton
@@ -23,9 +22,8 @@ from bluepass.database import Database
 from bluepass.model import Model
 from bluepass.passwords import PasswordGenerator
 from bluepass.locator import Locator, ZeroconfLocationSource
-from bluepass.messagebus import MessageBusServer
-from bluepass.socketapi import SocketAPIHandler
-from bluepass.syncapi import SyncAPIApplication, SyncAPIServer, SyncAPIPublisher
+from bluepass.socketapi import SocketAPIServer
+from bluepass.syncapi import SyncAPIServer, SyncAPIPublisher, init_syncapi_ssl
 from bluepass.syncer import Syncer
 from bluepass.util import misc as util
 
@@ -45,7 +43,7 @@ class Backend(object):
             listen = platform.default_listen_address
         self.listen_address = util.parse_address(listen)
         self.logger = logging.getLogger('bluepass.backend')
-        self._stop_event = Event()
+        self._stop_event = gruvi.Signal()
 
     @classmethod
     def add_args(self, parser):
@@ -67,6 +65,7 @@ class Backend(object):
         self.logger.debug('initializing cryto provider')
         crypto = singleton(CryptoProvider)
         pwgen = singleton(PasswordGenerator)
+        init_syncapi_ssl(self.data_dir)
 
         self.logger.debug('initializing database')
         fname = os.path.join(self.data_dir, 'bluepass.db')
@@ -83,54 +82,37 @@ class Backend(object):
             locator.add_source(ls())
 
         self.logger.debug('initializing sync API')
-        listener = util.create_listener(('0.0.0.0', 0))
-        listener.setblocking(False)
-        app = singleton(SyncAPIApplication)
-        syncapi = singleton(SyncAPIServer, listener, app)
-        syncapi.start()
+        syncapi = singleton(SyncAPIServer)
+        syncapi.listen(('0.0.0.0', 0))
 
         self.logger.debug('initializing sync API publisher')
         publisher = singleton(SyncAPIPublisher, syncapi)
         publisher.start()
 
-        # The syncer is started at +10 seconds so that the locator will have
-        # hopefully located all neighbors by then and we can do a once-off
-        # sync at startup. This is just a heuristic for optimization, the
-        # correctness of our sync algorithm does not depend on this.
         if locator.sources:
             self.logger.debug('initializing background sync worker')
             syncer = singleton(Syncer)
-            syncer.start_later(10)
+            syncer.start()
         else:
             self.logger.warning('no location sources available')
             self.logger.warning('network synchronization is disabled')
 
         self.logger.debug('initializing control API')
-        listener = util.create_listener(self.listen_address)
-        listener.setblocking(False)
+        messagebus = singleton(SocketAPIServer)
+        messagebus.listen(self.listen_address)
         fname = os.path.join(self.data_dir, 'backend.addr')
-        addr = util.unparse_address(listener.getsockname())
+        addr = gruvi.util.getsockname(messagebus.transport)
+        addr = gruvi.util.saddr(addr)
         with open(fname, 'w') as fout:
             fout.write('{}\n'.format(addr))
         self.logger.info('listening on: {}'.format(addr))
-        handler = SocketAPIHandler()
-        messagebus = singleton(MessageBusServer, listener, self.auth_token,
-                               handler)
-        if self.options.get('trace'):
-            fname = os.path.join(self.data_dir, 'backend.trace')
-            messagebus.set_trace(fname)
+        #messagebus._trace = self.options.get('trace')
         if not self.options.get('daemon'):
-            def messagebus_event(event, *args):
-                if event == 'LastConnectionClosed':
-                    self.stop()
-            messagebus.add_callback(messagebus_event)
-        messagebus.start()
+            messagebus.client_disconnected.connect(self.stop)
 
         self.logger.debug('installing signal handlers')
-        on_signal = get_hub().loop.signal(signal.SIGTERM)
-        on_signal.start(self.stop)
-
-        monkey.patch_time() # Make Thread.join() cooperative.
+        on_signal = pyuv.Signal(gruvi.get_hub().loop)
+        on_signal.start(self.stop, signal.SIGTERM)
 
         self.logger.debug('all backend components succesfully initialized')
 
@@ -140,15 +122,15 @@ class Backend(object):
         self.logger.debug('backend event loop terminated')
 
         self.logger.debug('shutting down control API')
-        messagebus.stop()
+        messagebus.close()
 
         self.logger.debug('shutting down database')
         database.close()
 
         self.logger.debug('stopped all backend components')
 
-    def stop(self):
-        self._stop_event.set()
+    def stop(self, *ignored):
+        self._stop_event.emit()
 
 
 class BackendController(object):

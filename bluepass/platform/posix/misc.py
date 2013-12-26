@@ -96,7 +96,7 @@ def lock_file(lockname):
                 raise
             msg = 'lockf() failed to lock %s: %s' % (lockname, os.strerror(e.errno))
             err = LockError(msg)
-            line = os.read(fd, 4096)
+            line = os.read(fd, 4096).decode('ascii')
             lockinfo = line.rstrip().split(':')
             if len(lockinfo) == 3:
                 err.lock_pid = int(lockinfo[0])
@@ -105,7 +105,7 @@ def lock_file(lockname):
             raise err
         os.ftruncate(fd, 0)
         cmd = os.path.basename(sys.argv[0])
-        os.write(fd, '%d:%d:%s\n' % (os.getpid(), os.getuid(), cmd))
+        os.write(fd, ('%d:%d:%s\n' % (os.getpid(), os.getuid(), cmd)).encode('ascii'))
     except (OSError, IOError) as e:
         raise LockError('%s: %s' % (lockname, os.strerror(e.errno)))
     lock = (fd, lockname)
