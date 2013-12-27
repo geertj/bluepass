@@ -8,12 +8,11 @@
 
 import time
 import math
-import logging
 import itertools
 import socket
 import uuid
 
-from bluepass import base64, json, uuid4
+from bluepass import base64, json, uuid4, logging
 from bluepass.error import StructuredError
 from bluepass.crypto import CryptoProvider, CryptoError
 from bluepass import platform
@@ -38,7 +37,7 @@ class Model(object):
         self.database = database
         self.crypto = CryptoProvider()
         self.vaults = {}
-        self.logger = logging.getLogger('bluepass.model')
+        self._log = logging.get_logger(self)
         self._next_seqnr = {}
         self._private_keys = {}
         self._trusted_certs = {}
@@ -237,48 +236,45 @@ class Model(object):
     def _check_items(self, vault):
         """Check all items in a vault."""
         total = errors = 0
-        logger = self.logger
         items = self.database.findall('items', '$vault = ?', (vault,))
-        logger.debug('Checking all items in vault "%s"', vault)
+        self._log.debug('Checking all items in vault "{}"', vault)
         for item in items:
             uuid = item.get('id', '<no id>')
             status, detail = self.check_item(item)
             if not status:
-                logger.error('Invalid item "%s": %s', uuid, detail)
+                self._log.error('Invalid item "{}": {}', uuid, detail)
                 errors += 1
                 continue
             typ = item['payload']['_type']
             if typ == 'Certificate':
                 status, detail = self.check_certificate(item)
                 if not status:
-                    logger.error('Invalid certificate "%s": %s', uuid, detail)
+                    self._log.error('Invalid certificate "{}": {}', uuid, detail)
                     errors += 1
                     continue
             elif typ == 'EncryptedItem':
                 status, detail = self.check_encrypted_item(item)
                 if not status:
-                    logger.error('Invalid encrypted item "%s": %s', uuid, detail)
+                    self._log.error('Invalid encrypted item "{}": {}', uuid, detail)
                     errors += 1
                     continue
             else:
-                logger.error('Unknown payload type "%s" in item "%s"', typ, item['id'])
+                self_log.error('Unknown payload type "{}" in item "{}"', typ, item['id'])
                 continue
             total += 1
-        logger.debug('Vault "%s" contains %d items and %d errors',
-                     vault, total, errors)
+        self._log.debug('Vault "{}" contains {} items and {} errors', vault, total, errors)
         return errors == 0
 
     def _load_vault(self, vault):
         """Check and load a single vault."""
-        logger = self.logger
         uuid = vault.get('id', '<no id>')
         status, detail = self.check_vault(vault)
         if not status:
-            logger.error('Vault "%s" has errors (skipping): %s', uuid, detail)
+            self._log.error('Vault "{}" has errors (skipping): {}', uuid, detail)
             return False
         uuid = vault['id']
         if not self._check_items(vault['id']):
-            logger.error('Vault %s has items with errors, skipping', uuid)
+            self._log.error('Vault {} has items with errors, skipping', uuid)
             return False
         self.vaults[uuid] = vault
         self._private_keys[uuid] = []
@@ -294,15 +290,14 @@ class Model(object):
             self._next_seqnr[uuid] = seqnr[0][0] + 1
         else:
             self._next_seqnr[uuid] = 0
-        logger.debug('Succesfully loaded vault "%s" (%s)', uuid, vault['name'])
+        self._log.debug('Succesfully loaded vault "{}" ({})', uuid, vault['name'])
         return True
 
     def _load_vaults(self):
         """Check and load all vaults."""
         total = errors = 0
-        logger = self.logger
         filename = self.database.filename
-        logger.debug('loading all vaults from database %s', filename)
+        self._log.debug('loading all vaults from database {}', filename)
         vaults = self.database.findall('vaults')
         for vault in vaults:
             total += 1
@@ -310,17 +305,15 @@ class Model(object):
                 errors += 1
                 continue
             self._calculate_trust(vault['id'])
-        logger.debug('successfully loaded %d vaults, %d vaults had errors',
-                     total-errors, errors)
+        self._log.debug('successfully loaded {} vaults, {} vaults had errors',
+                        total-errors, errors)
 
     def _verify_signature(self, item, pubkey):
         """Verify the signature on an item."""
         assert self.check_item(item)[0]
-        log = self.logger
         signature = item.pop('signature')
         if signature['algo'] != 'rsa-pss-sha256':
-            log.error('unknown signature algo "%s" for item "%s"',
-                      algo, item['id'])
+            self._log.error('unknown signature algo "{}" for item "{}"', algo, item['id'])
             return False
         message = json.dumps_c14n(item).encode('utf8')
         blob = base64.decode(signature['blob'])
@@ -393,9 +386,8 @@ class Model(object):
             certs = trusted_certs[subject]
             certs.sort()
             trusted_certs[subject] = [ cert[1] for cert in certs ]
-        logger = self.logger
         ncerts = sum([len(certs) for certs in trusted_certs.items()])
-        logger.debug('there are %d trusted certs for vault "%s"', ncerts, vault)
+        self._log.debug('there are {} trusted certs for vault "{}"', ncerts, vault)
         self._trusted_certs[vault] = trusted_certs
 
     def check_decrypted_item(self, item):
@@ -413,7 +405,6 @@ class Model(object):
 
     def check_version(self, item):
         """Check a decrypted item and ensure it is a valid version."""
-        log = self.logger
         try:
             u = json.unpack(item, '{s:s,s:{s:s,s:s,s?:s,s?:b,s:u,s{s:s}}}',
                             ('id', 'payload', 'id', '_type', 'parent', 'deleted',
@@ -532,10 +523,9 @@ class Model(object):
         cursize = len(self._version_cache[vault])
         linsize = sum((len(h) for h in self._linear_history[vault].items()))
         fullsize = sum((len(h) for h in self._full_history[vault].items()))
-        log = self.logger
-        log.debug('loaded %d versions from vault %s', cursize, vault)
-        log.debug('linear history contains %d versions', linsize)
-        log.debug('full history contains %d versions', fullsize)
+        self._log.debug('loaded {} versions from vault {}', cursize, vault)
+        self._log.debug('linear history contains {} versions', linsize)
+        self._log.debug('full history contains {} versions', fullsize)
 
     def _sign_item(self, vault, item):
         """Add a signature to an item."""
@@ -552,10 +542,10 @@ class Model(object):
     def _verify_item(self, vault, item):
         """Verify that an item has a correct signature and that it
         the signature was created by a trusted node."""
-        log = self.logger
         signer = item['origin']['node']
         if signer not in self._trusted_certs[vault]:
-            log.error('item %s was signed by unknown/untrusted node %s' % (item['id'], signer))
+            self._log.error('item {} was signed by unknown/untrusted node {}',
+                            item['id'], signer)
             return False
         cert = self._trusted_certs[vault][signer][0]['payload']
         synconly = cert.get('restrictions', {}).get('synconly')
@@ -596,20 +586,19 @@ class Model(object):
         """INTERNAL: decrypt an encrypted item."""
         assert vault in self.vaults
         assert vault in self._private_keys
-        log = self.logger
         crypto = self.crypto
         algo = item['payload']['algo']
         keyalgo = item['payload']['keyalgo']
         if algo != 'aes-cbc-pkcs7':
-            log.error('unknow algo in encrypted payload in item %s: %s', item['id'], algo)
+            self._log.error('unknow algo in encrypted payload in item {}: {}', item['id'], algo)
             return False
         if keyalgo != 'rsa-oaep':
-            log.error('unknow keyalgo in encrypted payload in item %s: %s', item['id'], algo)
+            self._log.error('unknow keyalgo in encrypted payload in item {}: {}', item['id'], algo)
             return False
         node = self.vaults[vault]['node']
         keys = item['payload']['keys']
         if node not in keys:
-            log.info('item %s was not encrypted to us, skipping' % item['id'])
+            self._log.info('item {} was not encrypted to us, skipping', item['id'])
             return False
         try:
             enckey = base64.decode(keys[node])
@@ -619,11 +608,11 @@ class Model(object):
             iv = base64.decode(item['payload']['iv'])
             clear = crypto.aes_decrypt(blob, symkey, iv, mode='cbc-pkcs7')
         except CryptoError as e:
-            log.error('could not decrypt encrypted payload in item %s: %s' % (item['id'], str(e)))
+            self._log.error('could not decrypt encrypted payload in item {}: {}' % (item['id'], str(e)))
             return False
         payload = json.try_loads(clear.decode('utf8'))
         if payload is None:
-            log.error('illegal JSON in decrypted payload in item %s', item['id'])
+            self._log.error('illegal JSON in decrypted payload in item {}', item['id'])
             return False
         item['payload'] = payload
         return True
@@ -693,7 +682,7 @@ class Model(object):
         # Tune pbkdf2 so that it takes about 0.2 seconds (but always at
         # least 4096 iterations).
         count = max(4096, int(0.2 * crypto.pbkdf2_speed(prf)))
-        self.logger.debug('using %d iterations for PBKDF2', count)
+        self._log.debug('using {} iterations for PBKDF2', count)
         encinfo['count'] = count
         encinfo['length'] = 16
         salt = crypto.random(16)
@@ -737,7 +726,7 @@ class Model(object):
             try:
                 callback(event, *args)
             except Exception as e:
-                self.logger.error('callback raised exception: %s' % str(e))
+                self._log.error('callback raised exception: {}' % str(e))
 
     # API for a typical GUI consumer
 
@@ -903,7 +892,6 @@ class Model(object):
             return
         if isinstance(password, compat.text_type):
             password = password.encode('utf8')
-        log = self.logger
         crypto = self.crypto
         for key in ('sign', 'encrypt'):
             keyinfo = self.vaults[uuid]['keys'][key]
@@ -928,7 +916,7 @@ class Model(object):
             private = crypto.aes_decrypt(privkey, symkey, iv, 'cbc-pkcs7')
             self._private_keys[uuid].append(private)
         self._load_versions(uuid)
-        log.debug('unlocked vault "%s" (%s)', uuid, self.vaults[uuid]['name'])
+        self._log.debug('unlocked vault "{}" ({})', uuid, self.vaults[uuid]['name'])
         self.raise_event('VaultUnlocked', self.vaults[uuid])
 
     def lock_vault(self, uuid):
@@ -937,7 +925,6 @@ class Model(object):
         This destroys the decrypted private keys and any decrypted items that
         are cached. It is not an error to lock a vault that is already locked.
         """
-        log = self.logger
         if not uuid4.check(uuid):
             raise ModelError('InvalidArgument', 'Illegal vault uuid')
         if uuid not in self.vaults:
@@ -947,7 +934,7 @@ class Model(object):
             return
         self._private_keys[uuid] = []
         self._clear_version_cache(uuid)
-        log.debug('locked vault "%s" (%s)', uuid, self.vaults[uuid]['name'])
+        self._log.debug('locked vault "{}" ({})', uuid, self.vaults[uuid]['name'])
         self.raise_event('VaultLocked', self.vaults[uuid])
 
     def vault_is_locked(self, uuid):
@@ -1227,7 +1214,6 @@ class Model(object):
         """Import a single item."""
         if not uuid4.check(vault):
             raise ModelError('InvalidArgument', 'Illegal vault UUID')
-        logger = self.logger
         status, detail = self.check_item(item)
         if not status:
             raise ModelError('InvalidArgument', 'Invalid item: %s' % detail)
@@ -1236,7 +1222,7 @@ class Model(object):
             if not status:
                 raise ModelError('InvalidArgument', 'Invalid cert: %s' % detail)
             self.database.insert('items', item)
-            logger.debug('imported certificate, re-calculating trust')
+            self._log.debug('imported certificate, re-calculating trust')
             self._calculate_trust(item['vault'])
             # Find items that are signed by this certificate
             query = "$vault = ? AND $payload$_type = 'EncryptedItem'" \
@@ -1263,7 +1249,7 @@ class Model(object):
                     not self.check_version(item)[0]:
                 continue
             versions.append(item)
-        logger.debug('updating version cache for %d versions', len(versions))
+        self._log.debug('updating version cache for {} versions', len(versions))
         self._update_version_cache(versions, notify=notify)
 
     def import_items(self, vault, items, notify=True):
@@ -1274,16 +1260,15 @@ class Model(object):
             raise ModelError('InvalidArgument', 'Illegal vault uuid')
         if vault not in self.vaults:
             raise ModelError('NotFound')
-        log = self.logger
-        log.debug('importing %d items', len(items))
+        self._log.debug('importing {} items', len(items))
         items = [ item for item in items if self.check_item(item)[0] ]
-        log.debug('%d items are well formed', len(items))
+        self._log.debug('{} items are well formed', len(items))
         # Weed out items we already have.
         vector = dict(self.get_vector(vault))
         items = [ item for item in items
                   if item['origin']['seqnr']
                         > vector.get(item['origin']['node'], -1) ]
-        log.debug('%d items are new', len(items))
+        self._log.debug('{} items are new', len(items))
         # If we are adding certs we need to add them first and re-calculate
         # trust before adding the other items.
         certs = [ item for item in items
@@ -1294,7 +1279,7 @@ class Model(object):
             # a trusted signature before they are considered trusted.
             self.database.insert_many('items', certs)
             self._calculate_trust(vault)
-            log.debug('imported %d certificates and recalculated trust', len(certs))
+            self._log.debug('imported {} certificates and recalculated trust', len(certs))
             # Some items may have become exposed by the certs. Find items
             # that were signed by the certs we just added.
             query = "$vault = ? AND $payload$_type = 'EncryptedItem'"
@@ -1302,7 +1287,7 @@ class Model(object):
             args = [ vault ]
             args += [ cert['payload']['node'] for cert in certs ]
             certitems = self.database.findall('items', query, args)
-            log.debug('%d items are possibly touched by these certs', len(certitems))
+            self._log.debug('{} items are possibly touched by these certs', len(certitems))
         else:
             certitems = []
         # Now see which items are valid under the possibly wider set of
@@ -1311,7 +1296,7 @@ class Model(object):
                      if item['payload']['_type'] == 'EncryptedItem'
                             and self.check_encrypted_item(item)[0] ]
         self.database.insert_many('items', encitems)
-        log.debug('imported %d encrypted items', len(encitems))
+        self._log.debug('imported {} encrypted items', len(encitems))
         # Update version and history caches (if the vault is unlocked)
         if not self.vault_is_locked(vault):
             versions = []

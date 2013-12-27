@@ -6,7 +6,7 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
-import logging
+from bluepass import logging
 from bluepass.error import Error
 
 
@@ -76,7 +76,7 @@ class Locator(object):
         self.neighbors = {}
         self.addresses = {}
         self.vaults = set()
-        self.logger = logging.getLogger(__name__)
+        self._log = logging.get_logger(self)
 
     def raise_event(self, event, *args):
         """Run all registered callbacks."""
@@ -89,7 +89,6 @@ class Locator(object):
 
     def _source_event(self, event, *args):
         """Callback for source events."""
-        logger = self.logger
         neighbor = args[0]
         node = neighbor['node']
         vault = neighbor['vault']
@@ -98,17 +97,17 @@ class Locator(object):
             if source not in self.neighbors:
                 self.neighbors[source] = {}
             if node in self.neighbors[source]:
-                logger.error('NeighborDiscovered event for known neighbor')
+                self._log.error('NeighborDiscovered event for known neighbor')
                 return
             self.neighbors[source][node] = neighbor
         elif event == 'NeighborUpdated':
             if source not in self.neighbors or node not in self.neighbors[source]:
-                logger.error('NeighborUpdated event for unknown neighbor')
+                self._log.error('NeighborUpdated event for unknown neighbor')
                 return
             self.neighbors[source][node] = neighbor
         elif event == 'NeighborDisappeared':
             if source not in self.neighbors or node not in self.neighbors[source]:
-                logger.error('NeighborDisappeared event for unknown neighbor')
+                self._log.error('NeighborDisappeared event for unknown neighbor')
                 return
             del self.neighbors[source][node]
             if not self.neighbors[source]:

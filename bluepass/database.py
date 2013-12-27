@@ -50,7 +50,6 @@ class Database(object):
         """Constructor."""
         self.filename = None
         self._lock = None
-        self.logger = logging.getLogger('bluepass.database')
         self.sqlite_args = self.sqlite_args  # move from class to instance
         self.sqlite_args.update(sqlite_args)
         if fname is not None:

@@ -12,12 +12,12 @@ import os
 import sys
 import stat
 import signal
-import logging
 
 import pyuv
 import gruvi
 
 from bluepass import platform, util
+from bluepass.logging import *
 from bluepass.factory import singleton
 from bluepass.crypto import CryptoProvider
 from bluepass.database import Database
@@ -43,7 +43,7 @@ class Backend(object):
         if listen is None:
             listen = platform.default_listen_address
         self.listen_address = util.parse_address(listen)
-        self.logger = logging.getLogger('bluepass.backend')
+        self._log = get_logger(self)
         self._stop_event = gruvi.Signal()
 
     @classmethod
@@ -61,44 +61,44 @@ class Backend(object):
 
     def run(self):
         """Initialize the backend and run its main loop."""
-        self.logger.debug('initializing backend components')
+        self._log.debug('initializing backend components')
 
-        self.logger.debug('initializing cryto provider')
+        self._log.debug('initializing cryto provider')
         crypto = singleton(CryptoProvider)
         pwgen = singleton(PasswordGenerator)
         init_syncapi_ssl(self.data_dir)
 
-        self.logger.debug('initializing database')
+        self._log.debug('initializing database')
         fname = os.path.join(self.data_dir, 'bluepass.db')
         database = singleton(Database, fname)
         database.lock()
 
-        self.logger.debug('initializing model')
+        self._log.debug('initializing model')
         model = singleton(Model, database)
 
-        self.logger.debug('initializing locator')
+        self._log.debug('initializing locator')
         locator = singleton(Locator)
         for ls in platform.get_location_sources():
-            self.logger.debug('adding location source: {}'.format(ls.name))
+            self._log.debug('adding location source: {}', ls.name)
             locator.add_source(ls())
 
-        self.logger.debug('initializing sync API')
+        self._log.debug('initializing sync API')
         syncapi = singleton(SyncAPIServer)
         syncapi.listen(('0.0.0.0', 0))
 
-        self.logger.debug('initializing sync API publisher')
+        self._log.debug('initializing sync API publisher')
         publisher = singleton(SyncAPIPublisher, syncapi)
         publisher.start()
 
         if locator.sources:
-            self.logger.debug('initializing background sync worker')
+            self._log.debug('initializing background sync worker')
             syncer = singleton(Syncer)
             syncer.start()
         else:
-            self.logger.warning('no location sources available')
-            self.logger.warning('network synchronization is disabled')
+            self._log.warning('no location sources available')
+            self._log.warning('network synchronization is disabled')
 
-        self.logger.debug('initializing control API')
+        self._log.debug('initializing control API')
         socketapi = singleton(SocketAPIServer)
         socketapi.listen(self.listen_address)
         fname = os.path.join(self.data_dir, 'backend.addr')
@@ -106,29 +106,29 @@ class Backend(object):
         addr = gruvi.util.saddr(addr)
         with open(fname, 'w') as fout:
             fout.write('{}\n'.format(addr))
-        self.logger.info('listening on: {}'.format(addr))
+        self._log.info('listening on: {}', addr)
         #socketapi._trace = self.options.get('trace')
         if not self.options.get('daemon'):
             socketapi.client_disconnected.connect(self.stop)
 
-        self.logger.debug('installing signal handlers')
+        self._log.debug('installing signal handlers')
         on_signal = pyuv.Signal(gruvi.get_hub().loop)
         on_signal.start(self.stop, signal.SIGTERM)
 
-        self.logger.debug('all backend components succesfully initialized')
+        self._log.debug('all backend components succesfully initialized')
 
         # This is where the backend runs (until stopped).
         self._stop_event.wait()
 
-        self.logger.debug('backend event loop terminated')
+        self._log.debug('backend event loop terminated')
 
-        self.logger.debug('shutting down control API')
+        self._log.debug('shutting down control API')
         socketapi.close()
 
-        self.logger.debug('shutting down database')
+        self._log.debug('shutting down database')
         database.close()
 
-        self.logger.debug('stopped all backend components')
+        self._log.debug('stopped all backend components')
 
     def stop(self, *ignored):
         self._stop_event.emit()

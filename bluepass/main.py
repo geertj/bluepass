@@ -36,18 +36,13 @@ def setup_logging(options, name):
     logger = logging.getLogger('bluepass')
     if options.log_stdout:
         handler = logging.StreamHandler(sys.stdout)
-        format = '{} %(levelname)s %(name)s'.format(name.upper())
+        format = '{} %(levelname)s %(message)s'.format(name.upper())
     else:
         logdir = options.data_dir or platform.get_appdir('bluepass')
         logname = os.path.join(logdir, '{}.log'.format(name))
         handler = logging.FileHandler(logname, 'w')
-        format = '%(asctime)s %(levelname)s %(name)s'
-    if options.debug:
-        format += ' [%(filename)s:%(lineno)d]'
-        logger.setLevel(logging.DEBUG)
-    else:
-        logger.setLevel(logging.ERROR)
-    format += ': %(message)s'
+        format = '%(asctime)s %(levelname)s %(message)s'
+    logger.setLevel(logging.DEBUG if options.debug else logging.INFO)
     handler.setFormatter(logging.Formatter(format))
     logger.addHandler(handler)
 

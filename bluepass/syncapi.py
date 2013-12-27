@@ -27,7 +27,7 @@ import gruvi
 from gruvi import Fiber, compat
 from gruvi.http import HttpServer, HttpClient
 
-from bluepass import _version, json, base64, uuid4, util
+from bluepass import _version, json, base64, uuid4, util, logging
 from bluepass.error import StructuredError
 from bluepass.factory import instance, singleton
 from bluepass.crypto import CryptoProvider, CryptoError, dhparams
@@ -145,7 +145,7 @@ class SyncAPIClient(object):
         """Create a new client for the syncapi API at `address`."""
         self.address = None
         self.connection = None
-        self.logger = logging.getLogger(__name__)
+        self._log = logging.get_logger(self)
         self.crypto = CryptoProvider()
         if self.pem_directory is None and compat.PY3:
             self.pem_directory = tempfile.mkdtemp()
@@ -156,7 +156,6 @@ class SyncAPIClient(object):
         
         This returns the HTTPResponse object on success, or None on failure.
         """
-        logger = self.logger
         headers = [] if headers is None else headers[:]
         headers.append(('User-Agent', 'Bluepass/%s' % _version.version))
         headers.append(('Accept', 'text/json'))
@@ -168,21 +167,21 @@ class SyncAPIClient(object):
         connection = self.connection
         assert connection is not None
         try:
-            logger.debug('client request: %s %s', method, url)
+            self._log.debug('client request: {} {}', method, url)
             connection.request(method, url, headers, body)
             response = connection.getresponse()
             body = response.read()
         except gruvi.Error as e:
-            logger.error('error when making HTTP request: %s', str(e))
+            self._log.error('error when making HTTP request: {}', str(e))
             return
         ctype = response.get_header('Content-Type')
         if ctype == 'text/json':
             parsed = json.try_loads(body.decode('utf8'))
             if parsed is None:
-                logger.error('response body contains invalid JSON')
+                self._log.error('response body contains invalid JSON')
                 return
             response.entity = parsed
-            logger.debug('parsed "%s" request body (%d bytes)', ctype, len(body))
+            self._log.debug('parsed "{}" request body ({} bytes)', ctype, len(body))
         else:
             response.entity = None
         return response
@@ -201,7 +200,7 @@ class SyncAPIClient(object):
         try:
             connection.connect(address, ssl=True, **sslargs)
         except gruvi.Error as e:
-            self.logger.error('could not connect to %s:%d' % address)
+            self._log.error('could not connect to {}:{}' % address)
             raise SyncAPIError('RemoteError', 'Could not connect')
         self.address = address
         self.connection = connection
@@ -226,21 +225,20 @@ class SyncAPIClient(object):
 
     def _check_hmac_cb_auth(self, response, pin):
         """Check a server to client HMAC_CB auth."""
-        logger = self.logger
         authinfo = response.get_header('Authentication-Info', '')
         try:
             method, options = parse_option_header(authinfo)
         except ValueError:
-            logger.error('illegal Authentication-Info header: %s', authinfo)
+            self._log.error('illegal Authentication-Info header: {}', authinfo)
             return False
         if 'signature' not in options or not base64.check(options['signature']):
-            logger.error('illegal Authentication-Info header: %s', authinfo)
+            self._log.error('illegal Authentication-Info header: {}', authinfo)
             return False
         signature = base64.decode(options['signature'])
         cb = self.connection.transport.ssl.get_channel_binding('tls-unique')
         check = self.crypto.hmac(adjust_pin(pin, -1).encode('ascii'), cb, 'sha1')
         if check != signature:
-            logger.error('HMAC_CB signature did not match')
+            self._log.error('HMAC_CB signature did not match')
             return False
         return True
 
@@ -252,8 +250,6 @@ class SyncAPIClient(object):
         """
         if self.connection is None:
             raise SyncAPIError('ProgrammingError', 'Not connected')
-        logger = self.logger
-        #logger.setContext('pair step #1')
         url = '/api/vaults/%s/pair' % uuid
         headers = [('Authorization', 'HMAC_CB name=%s' % name)]
         response = self._make_request('POST', url, headers)
@@ -261,15 +257,15 @@ class SyncAPIClient(object):
             raise SyncAPIError('RemoteError', 'Could not make HTTP request')
         status = response.status
         if status != 401:
-            logger.error('expecting HTTP status 401 (got: %s)', status)
-            raise SyncAPIError('RemoteError', 'HTTP {}'.format(response.status))
+            self_log.error('expecting HTTP status 401 (got: {})', status)
+            raise SyncAPIError('RemoteError', 'HTTP {0}'.format(response.status))
         wwwauth = response.get_header('WWW-Authenticate', '')
         try:
             method, options = parse_option_header(wwwauth)
         except ValueError:
             raise SyncAPIError('RemoteError', 'Illegal response')
         if method != 'HMAC_CB' or 'kxid' not in options:
-            logger.error('illegal WWW-Authenticate header: %s', wwwauth)
+            self._log.error('illegal WWW-Authenticate header: {}', wwwauth)
             raise SyncAPIError('RemoteError', 'Illegal response')
         return options['kxid']
 
@@ -281,8 +277,6 @@ class SyncAPIClient(object):
         """
         if self.connection is None:
             raise SyncAPIError('ProgrammingError', 'Not connected')
-        logger = self.logger
-        #logger.setContext('pair step #2')
         url = '/api/vaults/%s/pair' % uuid
         headers = self._get_hmac_cb_auth(kxid, pin)
         response = self._make_request('POST', url, headers, certinfo)
@@ -290,8 +284,8 @@ class SyncAPIClient(object):
             raise SyncAPIError('RemoteError', 'Could not make syncapi request')
         status = response.status
         if status != 200:
-            logger.error('expecting HTTP status 200 (got: %s)', status)
-            raise SyncAPIError('RemoteError', 'HTTP status {}'.format(response.status))
+            self._log.error('expecting HTTP status 200 (got: {})', status)
+            raise SyncAPIError('RemoteError', 'HTTP status {0}'.format(response.status))
         if not self._check_hmac_cb_auth(response, pin):
             raise SyncAPIError('RemoteError', 'Illegal syncapi response')
         peercert = response.entity
@@ -313,40 +307,37 @@ class SyncAPIClient(object):
 
     def _check_rsa_cb_auth(self, uuid, response, model):
         """Verify RSA_CB authentication."""
-        logger = self.logger
         authinfo = response.get_header('Authentication-Info', '')
         try:
             method, options = parse_option_header(authinfo)
         except ValueError:
-            logger.error('illegal Authentication-Info header')
+            self._log.error('illegal Authentication-Info header')
             return False
         if 'signature' not in options or 'node' not in options \
                 or not base64.check(options['signature']) \
                 or not uuid4.check(options['node']):
-            logger.error('illegal Authentication-Info header')
+            self._log.error('illegal Authentication-Info header')
             return False
         cb = self.connection.transport.ssl.get_channel_binding('tls-unique')
         signature = base64.decode(options['signature'])
         cert = model.get_certificate(uuid, options['node'])
         if cert is None:
-            logger.error('unknown node in RSA_CB authentication', node)
+            self_log.error('unknown node {} in RSA_CB authentication', node)
             return False
         pubkey = base64.decode(cert['payload']['keys']['auth']['key'])
         try:
             status = self.crypto.rsa_verify(cb, signature, pubkey, 'pss-sha1')
         except CryptoError:
-            logger.error('corrupt RSA_CB signature')
+            self._log.error('corrupt RSA_CB signature')
             return False
         if not status:
-            logger.error('RSA_CB signature did not match')
+            self._log.error('RSA_CB signature did not match')
         return status
 
     def sync(self, uuid, model, notify=True):
         """Synchronize vault `uuid` with the remote peer."""
         if self.connection is None:
             raise SyncAPIError('ProgrammingError', 'Not connected')
-        logger = self.logger
-        #logger.setContext('sync')
         vault = model.get_vault(uuid)
         if vault is None:
             raise SyncAPIError('NotFound', 'Vault not found')
@@ -359,7 +350,7 @@ class SyncAPIClient(object):
             raise SyncAPIError('RemoteError', 'Could not make HTTP request')
         status = response.status
         if status != 200:
-            logger.error('expecting HTTP status 200 (got: %s)', status)
+            self._log.error('expecting HTTP status 200 (got: {})', status)
             raise SyncAPIError('RemoteError', 'Illegal syncapi response')
         if not self._check_rsa_cb_auth(uuid, response, model):
             raise SyncAPIError('RemoteError', 'Illegal syncapi response')
@@ -367,12 +358,12 @@ class SyncAPIClient(object):
         if initems is None or not isinstance(initems, list):
             raise SyncAPIError('RemoteError', 'Illegal syncapi response')
         nitems = model.import_items(uuid, initems, notify=notify)
-        logger.debug('imported %d items into model', nitems)
+        self._log.debug('imported {} items into model', nitems)
         vector = response.get_header('X-Vector', '')
         try:
             vector = parse_vector(vector)
         except ValueError as e:
-            logger.error('illegal X-Vector header: %s (%s)', vector, str(e))
+            self._log.error('illegal X-Vector header: {} ({})', vector, str(e))
             raise SyncAPIError('RemoteError', 'Invalid response')
         outitems = model.get_items(uuid, vector)
         url = '/api/vaults/%s/items' % uuid
@@ -380,12 +371,12 @@ class SyncAPIClient(object):
         if not response:
             raise SyncAPIError('RemoteError', 'Illegal syncapi response')
         if status != 200:
-            logger.error('expecting HTTP status 200 (got: %s)', status)
+            self._log.error('expecting HTTP status 200 (got: {})', status)
             raise SyncAPIError('RemoteError', 'Illegal syncapi response')
         if not self._check_rsa_cb_auth(uuid, response, model):
             raise SyncAPIError('RemoteError', 'Illegal syncapi response')
-        logger.debug('succesfully retrieved %d items from peer', len(initems))
-        logger.debug('succesfully pushed %d items to peer', len(outitems))
+        self._log.debug('succesfully retrieved {} items from peer', len(initems))
+        self._log.debug('succesfully pushed {} items to peer', len(outitems))
         return len(initems) + len(outitems)
 
 
@@ -417,7 +408,7 @@ class WSGIApplication(object):
     _re_var = re.compile(':([a-z-A-Z_][a-z-A-Z0-9_]*)')
 
     def __init__(self):
-        self.logger = logging.getLogger(__name__)
+        self._log = logging.get_logger(self)
         self.routes = []
         self._init_mapper()
         self.local = gruvi.local()
@@ -460,11 +451,10 @@ class WSGIApplication(object):
 
     def __call__(self, env, start_response):
         """WSGI entry point."""
-        logger = self.logger
         self.local.environ = env
         self.local.headers = []
         self.local.start_response = start_response
-        logger.debug('server request: %s %s', env['REQUEST_METHOD'], env['PATH_INFO'])
+        self._log.debug('server request: {} {}', env['REQUEST_METHOD'], env['PATH_INFO'])
         match = self._match_routes(env)
         if not match:
             return self._simple_response(http.NOT_FOUND)
@@ -487,9 +477,7 @@ class WSGIApplication(object):
         except HTTPReturn as e:
             return self._simple_response(e.status, e.headers)
         except Exception:
-            lines = ['An uncaught exception occurred\n']
-            lines += traceback.format_exception(*sys.exc_info())
-            self.logger.error(''.join(lines))
+            self._log.exception('uncaught exception in handler')
             return self._simple_response(http.INTERNAL_SERVER_ERROR)
         if result is not None:
             result = json.dumps(result).encode('utf8')
@@ -755,7 +743,7 @@ class SyncAPIPublisher(Fiber):
 
     def _run(self):
         """Main execution loop, runs in its own fiber."""
-        logger = logging.getLogger(__name__)
+        log = logging.get_logger(self)
         locator = instance(Locator)
         self.locator = locator
         model = instance(Model)
@@ -765,7 +753,7 @@ class SyncAPIPublisher(Fiber):
         for vault in vaults:
             addr = gruvi.getsockname(self.server.transport)
             locator.register(vault['node'], nodename, vault['id'], vault['name'], addr)
-            logger.debug('published node %s', vault['node'])
+            log.debug('published node {}', vault['node'])
             self.published_nodes.add(vault['node'])
         stopped = False
         while not stopped:
@@ -774,7 +762,7 @@ class SyncAPIPublisher(Fiber):
             entry = self.queue.get(timeout)
             if entry:
                 event, args = entry
-                logger.debug('processing event: %s', event)
+                log.debug('processing event: {}', event)
                 if event == 'allow_pairing':
                     timeout = args[0]
                     if timeout > 0:
@@ -782,7 +770,7 @@ class SyncAPIPublisher(Fiber):
                         self.allow_pairing_until = time.time() + timeout
                         for node in self.published_nodes:
                             locator.set_property(node, 'visible', 'true')
-                            logger.debug('make node %s visible', node)
+                            log.debug('make node {} visible', node)
                         instance(SyncAPIApplication).allow_pairing = True
                         self.raise_event('AllowPairingStarted', timeout)
                     else:
@@ -790,14 +778,14 @@ class SyncAPIPublisher(Fiber):
                         self.allow_pairing_until = None
                         for node in self.published_nodes:
                             locator.set_property(node, 'visible', 'false')
-                            logger.debug('make node %s invisible (user)', node)
+                            log.debug('make node {} invisible (user)', node)
                         instance(SyncAPIApplication).allow_pairing = False
                         self.raise_event('AllowPairingEnded')
                 elif event == 'VaultAdded':
                     vault = args[0]
                     node = vault['node']
                     if node in self.published_nodes:
-                        logger.error('got VaultAdded signal for published node')
+                        log.error('got VaultAdded signal for published node')
                         continue
                     properties = {}
                     if self.allow_pairing:
@@ -806,26 +794,26 @@ class SyncAPIPublisher(Fiber):
                     locator.register(node, nodename, vault['id'], vault['name'],
                                      addr, properties)
                     self.published_nodes.add(node)
-                    logger.debug('published node %s', node)
+                    log.debug('published node {}', node)
                 elif event == 'VaultRemoved':
                     vault = args[0]
                     node = vault['node']
                     if node not in self.published_nodes:
-                        logger.error('got VaultRemoved signal for unpublished node')
+                        log.error('got VaultRemoved signal for unpublished node')
                         continue
                     locator.unregister(node)
                     self.published_nodes.remove(node)
-                    logger.debug('unpublished node %s', node)
+                    log.debug('unpublished node {}', node)
                 elif event == 'stop':
                     stopped = True
             now = time.time()
             if self.allow_pairing and now >= self.allow_pairing_until:
                 for node in self.published_nodes:
                     self.locator.set_property(node, 'visible', 'false')
-                    logger.debug('make node %s invisible (timeout)', node)
+                    log.debug('make node {} invisible (timeout)', node)
                 self.allow_pairing = False
                 self.allow_pairing_until = None
                 instance(SyncAPIApplication).allow_pairing = False
                 self.raise_event('AllowPairingEnded')
-            logger.debug('done processing event')
-        logger.debug('shutting down publisher')
+            log.debug('done processing event')
+        log.debug('shutting down publisher')

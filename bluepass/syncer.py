@@ -12,6 +12,7 @@ import logging
 import gruvi
 from gruvi import Fiber
 
+from bluepass import logging
 from bluepass.factory import instance
 from bluepass.model import Model
 from bluepass.locator import Locator
@@ -32,7 +33,7 @@ class Syncer(Fiber):
     def __init__(self):
         """Constructor."""
         super(Syncer, self).__init__(target=self._run)
-        self.logger = logging.getLogger(__name__)
+        self._log = logging.get_logger(self)
         self.queue = gruvi.Queue()
         self.neighbors = {}
         self.last_sync = {}
@@ -47,7 +48,6 @@ class Syncer(Fiber):
 
     def _run(self):
         """This runs the synchronization loop."""
-        logger = self.logger
         model = instance(Model)
         model.add_callback(self._event_callback)
         locator = instance(Locator)
@@ -108,8 +108,7 @@ class Syncer(Fiber):
                         item = model.get_version_item(vault, version['id'])
                         if item['origin']['node'] not in mynodes:
                             continue
-                        logger.debug('local update, syncing to all nodes for '
-                                     'vault %s', vault)
+                        self._log.debug('local update, syncing to all nodes for vault {}', vault)
                         sync_vaults.add(vault)
                         break
             # Now build a list of nodes including a "byaddress" list.
@@ -140,7 +139,7 @@ class Syncer(Fiber):
             if not sync_nodes:
                 # Nothing to do...
                 continue
-            logger.debug('total nodes to sync: %d', len(sync_nodes))
+            self._log.debug('total nodes to sync: {}', len(sync_nodes))
             # Now sync to the nodes. Try to reuse the network connection for
             # multiple nodes. We sort the addresses on location source so that
             # we will be able to give different priorites to different sources
@@ -153,30 +152,27 @@ class Syncer(Fiber):
                     node = neighbor['node']
                     if node not in sync_nodes:
                         continue  # already synced
-                    logger.debug('syncing with node %s', node)
+                    self._log.debug('syncing with node {}', node)
                     if client is None:
                         client = SyncAPIClient()
                         try:
                             client.connect(addr['addr'])
                         except SyncAPIError as e:
-                            logger.error('could not connect to %s: %s',
-                                          addr, str(e))
+                            self._log.error('could not connect to {}: {}', addr, str(e))
                             client.close()
                             break
-                        logger.debug('connected to %s', addr)
+                        self._log.debug('connected to {}', addr)
                         nconnections += 1
                     vault = neighbor['vault']
                     starttime = time.time()
                     try:
                         client.sync(vault, model)
                     except SyncAPIError:
-                        logger.error('failed to sync vault %s at %s',
-                                      vault, addr)
+                        self._log.error('failed to sync vault {} at {}', vault, addr)
                         client.close()
                         client = None
                     else:
-                        logger.debug('succesfully synced vault %s at %s',
-                                     vault, addr)
+                        self._log.debug('succesfully synced vault {} at {}', vault, addr)
                         nnodes += 1
                         sync_nodes.remove(node)
                         self.last_sync[node] = starttime
@@ -184,8 +180,7 @@ class Syncer(Fiber):
                     client.close()
                 if not sync_nodes:
                     break  # we are done
-            logger.debug('synced to %d nodes using %d network connections',
-                         nnodes, nconnections)
+            self._log.debug('synced to {} nodes using {} network connections', nnodes, nconnections)
             if sync_nodes:
-                logger.debug('failed to sync with %d nodes', len(sync_nodes))
-        logger.debug('syncer loop terminated')
+                self._log.debug('failed to sync with {} nodes', len(sync_nodes))
+        self._log.debug('syncer loop terminated')

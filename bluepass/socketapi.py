@@ -6,7 +6,6 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
-import logging
 import binascii
 
 from bluepass import _version, util
@@ -94,7 +93,6 @@ class SocketAPIHandler(JsonRpcHandler):
     def __init__(self):
         super(SocketAPIHandler, self).__init__()
         self.crypto = instance(CryptoProvider)
-        self.logger = logging.getLogger(__name__)
         self.pairdata = {}
 
     # Version

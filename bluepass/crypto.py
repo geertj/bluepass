@@ -17,6 +17,7 @@ import textwrap
 import binascii
 
 from bluepass.ext import openssl
+from bluepass.logging import *
 
 CryptoError = openssl.Error
 
@@ -56,6 +57,7 @@ class CryptoProvider(object):
     def __init__(self, engine=None):
         """Create a new crypto provider."""
         self.engine = engine or openssl
+        self._log = get_logger(self)
 
     def rsa_genkey(self, bits):
         """Generate an RSA key pair of `bits' bits. The result is a 2-tuple
@@ -135,8 +137,7 @@ class CryptoProvider(object):
         """Measure the speed of PBKDF2 on this system."""
         salt = password = '0123456789abcdef'
         length = 1; count = 1000
-        logger = logging.getLogger(__name__)
-        logger.debug('starting PBKDF2 speed measurement')
+        self._log.debug('starting PBKDF2 speed measurement')
         start = time.time()
         while True:
             startrun = time.time()
@@ -147,8 +148,8 @@ class CryptoProvider(object):
             count = int(count * math.e)
         end = time.time()
         speed = int(count / (endrun - startrun))
-        logger.debug('PBKDF2 speed is %d iterations / second', speed)
-        logger.debug('PBKDF2 speed measurement took %.2fs', (end - start))
+        self._log.debug('PBKDF2 speed is {} iterations / second', speed)
+        self._log.debug('PBKDF2 speed measurement took {:2f}', (end - start))
         # Store the speed in the class so that it can be re-used by
         # other instances.
         self._pbkdf2_speed[prf] = speed
