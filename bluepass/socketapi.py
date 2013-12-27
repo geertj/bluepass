@@ -20,7 +20,8 @@ from bluepass.locator import Locator
 from bluepass.syncapi import SyncAPIPublisher, SyncAPIClient, SyncAPIError
 
 import gruvi
-from gruvi.jsonrpc import JsonRpcServer
+from gruvi import jsonrpc
+from gruvi.jsonrpc import *
 
 
 class PairingError(StructuredError):
@@ -35,7 +36,7 @@ def method():
     return decorate
 
 
-class MessageBusHandler(object):
+class JsonRpcHandler(object):
     """JSON-RPC procotol handler."""
 
     def __init__(self):
@@ -54,12 +55,12 @@ class MessageBusHandler(object):
         return self.local.transport
 
     def send_response(self, result):
-        response = gruvi.jsonrpc.create_response(self.message, result)
+        response = jsonrpc.create_response(self.message, result)
         self.protocol.send_message(self.transport, response)
         self.local.response_sent = True
 
     def send_notification(self, name, *args):
-        message = gruvi.jsonrpc.create_notification(name, *args)
+        message = jsonrpc.create_notification(name, args)
         self.protocol.send_message(self.transport, message)
 
     def __call__(self, message, protocol, transport):
@@ -79,14 +80,14 @@ class MessageBusHandler(object):
             result = handler(*args)
         except StructuredError as e:
             if not self.local.response_sent:
-                response = gruvi.jsonrpc.create_error(message, e.asdict())
+                response = jsonrpc.create_error(message, error=e.asdict())
         else:
             if not self.local.response_sent:
-                response = gruvi.jsonrpc.create_response(message, result)
+                response = jsonrpc.create_response(message, result)
         return response
 
 
-class SocketAPIHandler(MessageBusHandler):
+class SocketAPIHandler(JsonRpcHandler):
     """A message bus handler that implements our socket API."""
 
     # NOTE: all methods run in separate fibers!
@@ -470,6 +471,6 @@ class SocketAPIServer(JsonRpcServer):
     def _forward_events(self, event, *args):
         # Forward the event over the message bus.
         for client in self.clients:
-            message = gruvi.jsonrpc.create_notification(event, *args)
+            message = jsonrpc.create_notification(event, args)
             self.send_message(client, message)
 

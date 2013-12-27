@@ -13,7 +13,6 @@ import sys
 # Unix like operating systems
 
 if hasattr(os, 'fork'):
-    from bluepass.platform.posix import errno
     from bluepass.platform.posix.misc import *
     if sys.platform == 'linux2':
         from bluepass.platform.linux.misc import *

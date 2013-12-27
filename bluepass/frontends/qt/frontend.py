@@ -9,14 +9,16 @@
 from __future__ import absolute_import, print_function
 
 import sys
+import time
+import gruvi
 
 from bluepass.factory import singleton
 from bluepass.frontend import Frontend
 from bluepass.util import misc as util
 
 from .application import Bluepass
-from .messagebus import QtMessageBusConnection, QtMessageBusHandler
-from .backend import BackendProxy, QtBackendController
+from .backend import QtBackendController
+from .socketapi import QtSocketApiClient
 
 
 class QtFrontend(Frontend):
@@ -42,19 +44,14 @@ class QtFrontend(Frontend):
 
         connect = self.options.get('connect')
         if connect:
-            addr = util.parse_address(connect)
-            sock = util.create_connection(addr, 5)
+            addr = gruvi.util.paddr(connect)
         else:
             bectrl = self.backend_controller = QtBackendController(self.options)
             bectrl.start()
-            sock = bectrl.connect()
-        if sock is None:
-            sys.stderr.write('Error: could not connect to backend\n')
-            return 1
+            time.sleep(2)
+            addr = gruvi.util.paddr(bectrl.backend_address())
 
-        handler = singleton(QtMessageBusHandler)
-        connection = singleton(QtMessageBusConnection, sock, self.auth_token,
-                               handler=handler)
-        backend = singleton(BackendProxy, connection)
+        backend = singleton(QtSocketApiClient)
+        backend.connect(addr)
 
         return app.exec_()

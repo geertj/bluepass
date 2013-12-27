@@ -17,7 +17,7 @@ from bluepass.util.misc import asset
 from .dialogs import PairingApprovalDialog
 from .passwordview import VaultView
 from .vaultmanager import VaultManager
-from .messagebus import MessageBusError
+from .socketapi import QtSocketApiError
 
 
 class ClearButton(QLabel):
@@ -155,8 +155,8 @@ class MenuButton(QPushButton):
         backend = qapp.backend()
         try:
             backend.lock_vault(vault)
-        except MessageBusError as e:
-            mainwindow.showMessage('Cloud not lock vault: %s' % str(e))
+        except QtSocketApiError as e:
+            mainwindow.showMessage('Could not lock vault: %s' % str(e))
         else:
             mainwindow.showMessage('Vault was locked succesfully')
 

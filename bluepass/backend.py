@@ -98,17 +98,17 @@ class Backend(object):
             self.logger.warning('network synchronization is disabled')
 
         self.logger.debug('initializing control API')
-        messagebus = singleton(SocketAPIServer)
-        messagebus.listen(self.listen_address)
+        socketapi = singleton(SocketAPIServer)
+        socketapi.listen(self.listen_address)
         fname = os.path.join(self.data_dir, 'backend.addr')
-        addr = gruvi.util.getsockname(messagebus.transport)
+        addr = gruvi.util.getsockname(socketapi.transport)
         addr = gruvi.util.saddr(addr)
         with open(fname, 'w') as fout:
             fout.write('{}\n'.format(addr))
         self.logger.info('listening on: {}'.format(addr))
-        #messagebus._trace = self.options.get('trace')
+        #socketapi._trace = self.options.get('trace')
         if not self.options.get('daemon'):
-            messagebus.client_disconnected.connect(self.stop)
+            socketapi.client_disconnected.connect(self.stop)
 
         self.logger.debug('installing signal handlers')
         on_signal = pyuv.Signal(gruvi.get_hub().loop)
@@ -122,7 +122,7 @@ class Backend(object):
         self.logger.debug('backend event loop terminated')
 
         self.logger.debug('shutting down control API')
-        messagebus.close()
+        socketapi.close()
 
         self.logger.debug('shutting down database')
         database.close()

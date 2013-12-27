@@ -9,10 +9,19 @@
 from __future__ import absolute_import, print_function
 
 import os
+import sys
 import shutil
 import tempfile
+import unittest
 
-from nose import SkipTest
+if sys.version_info[:2] >= (2,7):
+    import unittest
+else:
+    import unittest2 as unittest
+
+SkipTest = unittest.SkipTest
+
+__all__ = ['UnitTest', 'SkipTest', 'unittest']
 
 
 def assert_raises(exc, func, *args):
@@ -26,18 +35,18 @@ def assert_raises(exc, func, *args):
     raise AssertionError('%s not raised' % exc.__name__)
 
 
-class UnitTest(object):
+class UnitTest(unittest.TestCase):
     """Base class for unit tests."""
 
     @classmethod
-    def setup_class(cls):
+    def setUpClass(cls):
         cls.tmpdir = tempfile.mkdtemp()
         cls.prevdir = os.getcwd()
         os.chdir(cls.tmpdir)
         cls.tmpdirs = []
 
     @classmethod
-    def teardown_class(cls):
+    def tearDownClass(cls):
         os.chdir(cls.prevdir)
         shutil.rmtree(cls.tmpdir)
         for tmpdir in cls.tmpdirs:
@@ -55,3 +64,15 @@ class UnitTest(object):
         fout = file(fname, 'w')
         fout.write(contents)
         fout.close()
+
+    def assertRaises(self, exc, func, *args, **kwargs):
+        # Like unittest.assertRaises, but returns the exception.
+        try:
+            func(*args, **kwargs)
+        except exc as e:
+            exc = e
+        except Exception as e:
+            self.fail('Wrong exception raised: {0!s}'.format(e))
+        else:
+            self.fail('Exception not raised: {0!s}'.format(exc))
+        return exc

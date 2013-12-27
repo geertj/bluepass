@@ -16,7 +16,7 @@ from PyQt4.QtGui import QApplication, QIcon, QPixmap
 from bluepass.util.misc import asset
 from bluepass.factory import singleton, instance
 
-from .backend import BackendProxy
+from .socketapi import QtSocketApiClient
 from .mainwindow import MainWindow
 from .vaultmanager import VaultManager
 
@@ -39,7 +39,7 @@ class Bluepass(QApplication):
         return instance(MainWindow)
 
     def backend(self):
-        return instance(BackendProxy)
+        return instance(QtSocketApiClient)
 
     def config(self):
         if self._config is None:

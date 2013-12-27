@@ -20,7 +20,7 @@ from PyQt4.QtGui import (QScrollArea, QWidget, QLabel, QVBoxLayout, QPixmap,
 
 from bluepass.util.misc import asset
 from .util import SortedList
-from .messagebus import MessageBusError
+from .socketapi import QtSocketApiError
 from .dialogs import EditPasswordDialog
 
 
@@ -192,7 +192,7 @@ class UnlockVaultWidget(QFrame):
         unlock_others = self.unlockcb.isChecked()
         try:
             success = backend.unlock_vault(self.vault, password)
-        except MessageBusError as e:
+        except QtSocketApiError as e:
             status = '<i>Could not unlock vault: %s</i>' % e.error_message
             self.setStatus(status)
             return
@@ -210,7 +210,7 @@ class UnlockVaultWidget(QFrame):
                 continue
             try:
                 backend.unlock_vault(uuid, password)
-            except MessageBusError:
+            except QtSocketApiError:
                 pass
             else:
                 count += 1
