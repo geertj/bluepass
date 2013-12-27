@@ -18,7 +18,7 @@ from PyQt4.QtGui import (QScrollArea, QWidget, QLabel, QVBoxLayout, QPixmap,
         QApplication, QTabBar, QSizePolicy, QCheckBox, QStackedWidget,
         QGridLayout, QMenu, QKeySequence)
 
-from bluepass.util.misc import asset
+from bluepass.util import asset
 from .util import SortedList
 from .socketapi import QtSocketApiError
 from .dialogs import EditPasswordDialog

@@ -12,9 +12,9 @@ import sys
 import time
 import gruvi
 
+from bluepass import util
 from bluepass.factory import singleton
 from bluepass.frontend import Frontend
-from bluepass.util import misc as util
 
 from .application import Bluepass
 from .backend import QtBackendController

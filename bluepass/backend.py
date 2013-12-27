@@ -6,6 +6,8 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
+from __future__ import absolute_import, print_function
+
 import os
 import sys
 import stat
@@ -15,7 +17,7 @@ import logging
 import pyuv
 import gruvi
 
-from bluepass import platform
+from bluepass import platform, util
 from bluepass.factory import singleton
 from bluepass.crypto import CryptoProvider
 from bluepass.database import Database
@@ -25,7 +27,6 @@ from bluepass.locator import Locator, ZeroconfLocationSource
 from bluepass.socketapi import SocketAPIServer
 from bluepass.syncapi import SyncAPIServer, SyncAPIPublisher, init_syncapi_ssl
 from bluepass.syncer import Syncer
-from bluepass.util import misc as util
 
 
 class Backend(object):

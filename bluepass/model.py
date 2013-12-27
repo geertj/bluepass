@@ -13,10 +13,9 @@ import itertools
 import socket
 import uuid
 
+from bluepass import base64, json, uuid4
 from bluepass.error import StructuredError
 from bluepass.crypto import CryptoProvider, CryptoError
-from bluepass.util import json, base64
-from bluepass.util.uuid import check_uuid4
 from bluepass import platform
 
 import hashlib
@@ -86,13 +85,13 @@ class Model(object):
                                 'algo'))
         except json.UnpackError as e:
             return False, str(e)
-        if not check_uuid4(u[0]):
+        if not uuid4.check(u[0]):
             return False, 'Illegal UUID "%s"' % u[0]
         if len(u[1]) == 0:
             return False, 'Vault name cannot be empty'
         elif len(u[1]) > 100:
             return False, 'Vault name too long (max = 100 characters)'
-        if not check_uuid4(u[2]):
+        if not uuid4.check(u[2]):
             return False, 'Illegal node UUID "%s"' % u[2]
         if u[3] != 'rsa':
             return False, 'Unknown key type "%s" for sign key' % u[3]
@@ -153,13 +152,13 @@ class Model(object):
                              'payload', '_type', 'signature', 'algo', 'blob'))
         except json.UnpackError as e:
             return False, str(e)
-        if not check_uuid4(u[0]):
+        if not uuid4.check(u[0]):
             return False, 'Illegal UUID'
         if u[1] != 'Item':
             return False, 'Expecting type "Item" (got: "%s")' % u[1]
-        if not check_uuid4(u[2]):
+        if not uuid4.check(u[2]):
             return False, 'Illegal vault UUID'
-        if not check_uuid4(u[3]):
+        if not uuid4.check(u[3]):
             return False, 'Illegal origin node UUID'
         if u[5] not in ('Certificate', 'EncryptedItem'):
             return False, 'Unknown payload type "%s"' % u[5]
@@ -183,12 +182,12 @@ class Model(object):
                              'keytype', 'restrictions', 'synconly'))
         except json.UnpackError as e:
             return False, str(e)
-        assert check_uuid4(u[0])
-        if not check_uuid4(u[1]):
+        assert uuid4.check(u[0])
+        if not uuid4.check(u[1]):
             return False, 'Invalid UUID'
         if u[2] != 'Certificate':
             return False, 'Expecting type "Certificate" (got: "%s")' % u[3]
-        if not check_uuid4(u[3]):
+        if not uuid4.check(u[3]):
             return False, 'Invalid node UUID'
         if not u[4]:
             return False, 'Name cannot be empty'
@@ -216,7 +215,7 @@ class Model(object):
                              'blob', 'keyalgo', 'keys'))
         except json.UnpackError as e:
             return False, str(e)
-        assert check_uuid4(u[0])
+        assert uuid4.check(u[0])
         assert u[1] == 'EncryptedItem'
         if u[2] != 'aes-cbc-pkcs7':
             return False, 'Unknown algo "%s"' % u[2]
@@ -229,7 +228,7 @@ class Model(object):
         if not isinstance(u[6], dict):
             return False, 'Invalid keys dict'
         for key,value in u[6].items():
-            if not check_uuid4(key):
+            if not uuid4.check(key):
                 return False, 'Illegal key UUID "%s" in keys dict' % key
             if not base64.check(value):
                 return False, 'Invalid base64 for key "%s" in keys dict' % key
@@ -406,7 +405,7 @@ class Model(object):
                             ('id', 'payload', 'id', '_type'))
         except json.UnpackError as e:
             return False, str(e)
-        if not check_uuid4(u[1]):
+        if not uuid4.check(u[1]):
             return False, 'Invalid UUID "%s"' % u[1]
         if u[2] != 'Version':
             return False, 'Unknown type "%s"' % u[2]
@@ -421,14 +420,14 @@ class Model(object):
                              'created_at', 'version', 'id'))
         except json.UnpackError as e:
             return str(e)
-        assert check_uuid4(u[0])
-        if not check_uuid4(u[1]):
+        assert uuid4.check(u[0])
+        if not uuid4.check(u[1]):
             return False, 'Invalid version UUID "%s"' % u[1]
         if u[2] != 'Version':
             return False, 'Expecting type "Version" (got: "%s")' % u[2]
-        if u[3] and not check_uuid4(u[3]):
+        if u[3] and not uuid4.check(u[3]):
             return False, 'Invalid parent UUID "%s"' % u[3]
-        if not check_uuid4(u[6]):
+        if not uuid4.check(u[6]):
             return False, 'Invalid version data UUID "%s"' % u[6]
         return True, 'All checks passed'
 
@@ -755,7 +754,7 @@ class Model(object):
         if not isinstance(config, dict):
             raise ModelError('InvalidArgument', '"config" must be a dict')
         uuid = config.get('id')
-        if not check_uuid4(uuid):
+        if not uuid4.check(uuid):
             raise ModelError('InvalidArgument', 'Invalid config uuid')
         self.database.update('config', '$id = ?', (uuid,), config)
 
@@ -774,7 +773,7 @@ class Model(object):
         if not isinstance(password, compat.string_types):
             raise ModelError('InvalidArgument', '"password" must be str/unicode')
         if uuid is not None:
-            if not check_uuid4(uuid):
+            if not uuid4.check(uuid):
                 raise ModelError('InvalidArgument', 'Illegal vault uuid')
             if uuid in self.vaults:
                 raise ModelError('Exists', 'A vault with this UUID already exists')
@@ -814,7 +813,7 @@ class Model(object):
 
     def get_vault(self, uuid):
         """Return the vault with `uuid` or None if there is no such vault."""
-        if not check_uuid4(uuid):
+        if not uuid4.check(uuid):
             raise ModelError('InvalidArgument', 'Illegal vault uuid')
         return self.database.findone('vaults', '$id = ?', (uuid,))
 
@@ -835,7 +834,7 @@ class Model(object):
         if not isinstance(vault, dict):
             raise ModelError('InvalidArgument', '"vault" must be a dict')
         uuid = vault.get('id')
-        if not check_uuid4(uuid):
+        if not uuid4.check(uuid):
             raise ModelError('InvalidArgument', 'Invalid vault UUID')
         if uuid not in self.vaults:
             raise ModelError('NotFound', 'No such vault')
@@ -857,7 +856,7 @@ class Model(object):
 
     def get_vault_statistics(self, uuid):
         """Return some statistics for a vault."""
-        if not check_uuid4(uuid):
+        if not uuid4.check(uuid):
             raise ModelError('InvalidArgument', 'Illegal vault uuid')
         if uuid not in self.vaults:
             raise ModelError('NotFound', 'No such vault')
@@ -893,7 +892,7 @@ class Model(object):
         private keys that are stored in the database and stored them in
         memory. It is not an error to unlock a vault that is already unlocked.
         """
-        if not check_uuid4(uuid):
+        if not uuid4.check(uuid):
             raise ModelError('InvalidArgument', 'Illegal vault uuid')
         if not isinstance(password, compat.string_types):
             raise ModelError('InvalidArgument', 'Illegal password')
@@ -939,7 +938,7 @@ class Model(object):
         are cached. It is not an error to lock a vault that is already locked.
         """
         log = self.logger
-        if not check_uuid4(uuid):
+        if not uuid4.check(uuid):
             raise ModelError('InvalidArgument', 'Illegal vault uuid')
         if uuid not in self.vaults:
             raise ModelError('NotFound', 'No such vault')
@@ -953,7 +952,7 @@ class Model(object):
 
     def vault_is_locked(self, uuid):
         """Return whether a vault is locked."""
-        if not check_uuid4(uuid):
+        if not uuid4.check(uuid):
             raise ModelError('InvalidArgument', 'Illegal vault uuid')
         if uuid not in self.vaults:
             raise ModelError('NotFound', 'No such vault')
@@ -962,9 +961,9 @@ class Model(object):
 
     def get_version(self, vault, uuid):
         """Get a single current version."""
-        if not check_uuid4(vault):
+        if not uuid4.check(vault):
             raise ModelError('InvalidArgument', 'Illegal vault uuid')
-        if not check_uuid4(uuid):
+        if not uuid4.check(uuid):
             raise ModelError('InvalidArgument', 'Illegal version uuid')
         if vault not in self.vaults:
             raise ModelError('NotFound', 'No such vault')
@@ -977,7 +976,7 @@ class Model(object):
 
     def get_versions(self, vault):
         """Return a list of all current versions."""
-        if not check_uuid4(vault):
+        if not uuid4.check(vault):
             raise ModelError('InvalidArgument', 'Illegal vault uuid')
         if vault not in self.vaults:
             raise ModelError('NotFound', 'No such vault')
@@ -992,7 +991,7 @@ class Model(object):
 
     def add_version(self, vault, version):
         """Add a new version."""
-        if not check_uuid4(vault):
+        if not uuid4.check(vault):
             raise ModelError('InvalidArgument', 'Illegal vault uuid')
         if not isinstance(version, dict):
             raise ModelError('InvalidArgument', '"version" must be a dict')
@@ -1011,12 +1010,12 @@ class Model(object):
 
     def update_version(self, vault, version):
         """Update an existing version."""
-        if not check_uuid4(vault):
+        if not uuid4.check(vault):
             raise ModelError('InvalidArgument', 'Illegal vault uuid')
         if not isinstance(version, dict):
             raise ModelError('InvalidArgument', '"version" must be a dict')
         uuid = version.get('id')
-        if not check_uuid4(uuid):
+        if not uuid4.check(uuid):
             raise ModelError('InvalidArgument', 'Invalid version uuid')
         if vault not in self.vaults:
             raise ModelError('NotFound', 'No such vault')
@@ -1036,12 +1035,12 @@ class Model(object):
 
     def delete_version(self, vault, version):
         """Delete a version."""
-        if not check_uuid4(vault):
+        if not uuid4.check(vault):
             raise ModelError('InvalidArgument', 'Illegal vault uuid')
         if not isinstance(version, dict):
             raise ModelError('InvalidArgument', '"version" must be a dict')
         uuid = version.get('id')
-        if not check_uuid4(uuid):
+        if not uuid4.check(uuid):
             raise ModelError('InvalidArgument', 'Invalid version uuid')
         if vault not in self.vaults:
             raise ModelError('NotFound', 'No such vault')
@@ -1062,9 +1061,9 @@ class Model(object):
 
     def get_version_history(self, vault, uuid):
         """Return the history for version `uuid`."""
-        if not check_uuid4(vault):
+        if not uuid4.check(vault):
             raise ModelError('InvalidArgument', 'Illegal vault uuid')
-        if not check_uuid4(uuid):
+        if not uuid4.check(uuid):
             raise ModelError('InvalidArgument', 'Illegal version uuid')
         if vault not in self.vaults:
             raise ModelError('NotFound', 'No such vault')
@@ -1080,9 +1079,9 @@ class Model(object):
     def get_version_item(self, vault, uuid):
         """Get the most recent item for a version (including
         deleted versions)."""
-        if not check_uuid4(vault):
+        if not uuid4.check(vault):
             raise ModelError('InvalidArgument', 'Illegal vault uuid')
-        if not check_uuid4(uuid):
+        if not uuid4.check(uuid):
             raise ModelError('InvalidArgument', 'Illegal version uuid')
         if vault not in self.vaults:
             raise ModelError('NotFound', 'No such vault')
@@ -1098,9 +1097,9 @@ class Model(object):
 
     def get_certificate(self, vault, node):
         """Return a certificate for `node` in `vault`, if there is one."""
-        if not check_uuid4(vault):
+        if not uuid4.check(vault):
             raise ModelError('InvalidArgument', 'Illegal vault uuid')
-        if not check_uuid4(node):
+        if not uuid4.check(node):
             raise ModelError('InvalidArgument', 'Illegal node uuid')
         if vault not in self.vaults or node not in self._trusted_certs[vault]:
             return
@@ -1108,7 +1107,7 @@ class Model(object):
 
     def get_auth_key(self, vault):
         """Return the private authentication key for `vault`."""
-        if not check_uuid4(vault):
+        if not uuid4.check(vault):
             raise ModelError('InvalidArgument', 'Illegal vault uuid')
         if vault not in self.vaults:
             raise ModelError('NotFound', 'No such vault')
@@ -1126,7 +1125,7 @@ class Model(object):
                              'keytype', 'restrictions', 'synconly'))
         except json.UnpackError as e:
             return False, str(e)
-        if not check_uuid4(u[0]):
+        if not uuid4.check(u[0]):
             return False, 'Illegal node UUID'
         if not u[1]:
             return False, 'Name must be > 0 characters'
@@ -1157,7 +1156,7 @@ class Model(object):
         versions will be encrypted to it automatically. The new node may also
         introduce other new nodes into the vault. 
         """
-        if not check_uuid4(vault):
+        if not uuid4.check(vault):
             raise ModelError('InvalidArgument', 'Illegal vault UUID')
         if vault not in self.vaults:
             raise ModelError('NotFound', 'Vault not found')
@@ -1182,7 +1181,7 @@ class Model(object):
     def get_vector(self, vault):
         """Return a vector containing the latest versions for each node that
         we know of."""
-        if not check_uuid4(vault):
+        if not uuid4.check(vault):
             raise ModelError('InvalidArgument', 'Illegal vault uuid')
         if vault not in self.vaults:
             raise ModelError('NotFound', 'No such vault')
@@ -1195,14 +1194,14 @@ class Model(object):
 
     def get_items(self, vault, vector=None):
         """Return the items in `vault` that are newer than `vector`."""
-        if not check_uuid4(vault):
+        if not uuid4.check(vault):
             raise ModelError('InvalidArgument', 'Illegal vault uuid')
         if vector is not None:
             if not isinstance(vector, (tuple, list)):
                 raise ModelError('InvalidArgument', 'Illegal vector')
             for elem in vector:
                 if not isinstance(elem, (tuple, list)) or len(elem) != 2 or \
-                        not check_uuid4(elem[0]) or \
+                        not uuid4.check(elem[0]) or \
                         not isinstance(elem[1], compat.integer_types):
                     raise ModelError('InvalidArgument', 'Illegal vector')
         if vault not in self.vaults:
@@ -1226,7 +1225,7 @@ class Model(object):
 
     def import_item(self, vault, item, notify=True):
         """Import a single item."""
-        if not check_uuid4(vault):
+        if not uuid4.check(vault):
             raise ModelError('InvalidArgument', 'Illegal vault UUID')
         logger = self.logger
         status, detail = self.check_item(item)
@@ -1271,7 +1270,7 @@ class Model(object):
         """Import multiple items. This is more efficient than calling
         import_item() multiple times. Items with errors are silently skipped
         and do not prevent good items to be imported."""
-        if not check_uuid4(vault):
+        if not uuid4.check(vault):
             raise ModelError('InvalidArgument', 'Illegal vault uuid')
         if vault not in self.vaults:
             raise ModelError('NotFound')

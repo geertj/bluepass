@@ -13,8 +13,8 @@ import socket
 
 from PyQt4.QtCore import QObject, QProcess, Signal
 
+from bluepass import util
 from bluepass.backend import BackendController
-from bluepass.util import misc as util
 
 
 class QtBackendController(BackendController):

@@ -27,17 +27,12 @@ import gruvi
 from gruvi import Fiber, compat
 from gruvi.http import HttpServer, HttpClient
 
-from bluepass import _version
+from bluepass import _version, json, base64, uuid4, util
 from bluepass.error import StructuredError
 from bluepass.factory import instance, singleton
 from bluepass.crypto import CryptoProvider, CryptoError, dhparams
 from bluepass.model import Model
 from bluepass.locator import Locator
-from bluepass.util import json, base64
-from bluepass.util.ssl import patch_gruvi_ssl
-from bluepass.util.uuid import check_uuid4
-from bluepass.util.logging import ContextLogger
-from bluepass.util import misc as util
 
 __all__ = ('SyncAPIError', 'SyncAPIClient', 'SyncAPIApplication', 'SyncAPIServer')
 
@@ -48,6 +43,7 @@ def init_syncapi_ssl(pemdir):
     SyncAPIClient.pem_directory = pemdir
     SyncAPIServer.pem_directory = pemdir
     if not compat.PY3:
+        from bluepass.ssl import patch_gruvi_ssl
         patch_gruvi_ssl()
 
 def init_pem_directory(pemdir):
@@ -120,7 +116,7 @@ def parse_vector(vector):
     parts = vector.split(',')
     for part in parts:
         uuid, seqno = part.split(':')
-        if not check_uuid4(uuid):
+        if not uuid4.check(uuid):
             raise ValueError('Illegal UUID')
         seqno = int(seqno)
         result.append((uuid, seqno))
@@ -149,8 +145,7 @@ class SyncAPIClient(object):
         """Create a new client for the syncapi API at `address`."""
         self.address = None
         self.connection = None
-        logger = logging.getLogger(__name__)
-        self.logger = ContextLogger(logger)
+        self.logger = logging.getLogger(__name__)
         self.crypto = CryptoProvider()
         if self.pem_directory is None and compat.PY3:
             self.pem_directory = tempfile.mkdtemp()
@@ -258,7 +253,7 @@ class SyncAPIClient(object):
         if self.connection is None:
             raise SyncAPIError('ProgrammingError', 'Not connected')
         logger = self.logger
-        logger.setContext('pair step #1')
+        #logger.setContext('pair step #1')
         url = '/api/vaults/%s/pair' % uuid
         headers = [('Authorization', 'HMAC_CB name=%s' % name)]
         response = self._make_request('POST', url, headers)
@@ -287,7 +282,7 @@ class SyncAPIClient(object):
         if self.connection is None:
             raise SyncAPIError('ProgrammingError', 'Not connected')
         logger = self.logger
-        logger.setContext('pair step #2')
+        #logger.setContext('pair step #2')
         url = '/api/vaults/%s/pair' % uuid
         headers = self._get_hmac_cb_auth(kxid, pin)
         response = self._make_request('POST', url, headers, certinfo)
@@ -327,7 +322,7 @@ class SyncAPIClient(object):
             return False
         if 'signature' not in options or 'node' not in options \
                 or not base64.check(options['signature']) \
-                or not check_uuid4(options['node']):
+                or not uuid4.check(options['node']):
             logger.error('illegal Authentication-Info header')
             return False
         cb = self.connection.transport.ssl.get_channel_binding('tls-unique')
@@ -351,7 +346,7 @@ class SyncAPIClient(object):
         if self.connection is None:
             raise SyncAPIError('ProgrammingError', 'Not connected')
         logger = self.logger
-        logger.setContext('sync')
+        #logger.setContext('sync')
         vault = model.get_vault(uuid)
         if vault is None:
             raise SyncAPIError('NotFound', 'Vault not found')
@@ -597,7 +592,7 @@ class SyncAPIApplication(WSGIApplication):
             raise HTTPReturn(http.UNAUTHORIZED, headers)
         if method != 'RSA_CB':
             raise HTTPReturn(http.UNAUTHORIZED, headers)
-        if 'node' not in opts or not check_uuid4(opts['node']):
+        if 'node' not in opts or not uuid4.check(opts['node']):
             raise HTTPReturn(http.UNAUTHORIZED, headers)
         if 'signature' not in opts or not base64.check(opts['signature']):
             raise HTTPReturn(http.UNAUTHORIZED, headers)
@@ -622,7 +617,7 @@ class SyncAPIApplication(WSGIApplication):
     @expose('/api/vaults/:vault/pair', method='POST')
     def pair(self, env):
         uuid = env['mapper.vault']
-        if not check_uuid4(uuid):
+        if not uuid4.check(uuid):
             raise HTTPReturn(http.NOT_FOUND)
         model = instance(Model)
         vault = model.get_vault(uuid)
@@ -645,7 +640,7 @@ class SyncAPIApplication(WSGIApplication):
     @expose('/api/vaults/:vault/items', method='GET')
     def sync_outbound(self, env):
         uuid = env['mapper.vault']
-        if not check_uuid4(uuid):
+        if not uuid4.check(uuid):
             raise HTTPReturn(http.NOT_FOUND)
         model = instance(Model)
         vault = model.get_vault(uuid)
@@ -667,7 +662,7 @@ class SyncAPIApplication(WSGIApplication):
     @expose('/api/vaults/:vault/items', method='POST')
     def sync_inbound(self, env):
         uuid = env['mapper.vault']
-        if not check_uuid4(uuid):
+        if not uuid4.check(uuid):
             raise HTTPReturn(http.NOT_FOUND)
         model = instance(Model)
         vault = model.get_vault(uuid)

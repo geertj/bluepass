@@ -9,8 +9,7 @@
 import logging
 import binascii
 
-from bluepass import _version
-from bluepass.util import misc
+from bluepass import _version, util
 from bluepass.factory import instance
 from bluepass.error import StructuredError
 from bluepass.crypto import CryptoProvider
@@ -391,7 +390,7 @@ class SocketAPIHandler(JsonRpcHandler):
         # Don't keep the GUI blocked while we wait for remote approval.
         cookie = binascii.hexlify(self.crypto.random(16)).decode('ascii')
         self.send_response(cookie)
-        name = misc.gethostname()
+        name = util.gethostname()
         for addr in neighbor['addresses']:
             client = SyncAPIClient()
             addr = addr['addr']
@@ -436,7 +435,7 @@ class SocketAPIHandler(JsonRpcHandler):
         model = instance(Model)
         vault = model.create_vault(name, password, neighbor['vault'],
                                    notify=False)
-        certinfo = { 'node': vault['node'], 'name': misc.gethostname() }
+        certinfo = { 'node': vault['node'], 'name': util.gethostname() }
         keys = certinfo['keys'] = {}
         for key in vault['keys']:
             keys[key] = { 'key': vault['keys'][key]['public'],

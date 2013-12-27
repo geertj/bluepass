@@ -13,7 +13,7 @@ from PyQt4.QtGui import (QDialog, QLineEdit, QTextEdit, QComboBox, QLabel,
         QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout, QApplication,
         QIcon, QPixmap)
 
-from bluepass.util.misc import asset
+from bluepass.util import asset
 from .util import SortedList
 from .socketapi import QtSocketApiError
 from .passwordbutton import GeneratePasswordButton, RandomPasswordConfiguration

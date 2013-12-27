@@ -13,7 +13,7 @@ from PyQt4.QtGui import (QLabel, QLineEdit, QIcon, QPixmap, QPushButton,
         QAction, QMenu, QStatusBar, QKeySequence, QWidget, QFrame,
         QHBoxLayout, QVBoxLayout, QApplication, QMessageBox)
 
-from bluepass.util.misc import asset
+from bluepass.util import asset
 from .dialogs import PairingApprovalDialog
 from .passwordview import VaultView
 from .vaultmanager import VaultManager

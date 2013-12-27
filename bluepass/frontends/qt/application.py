@@ -13,7 +13,7 @@ import sys
 from PyQt4.QtCore import QTimer
 from PyQt4.QtGui import QApplication, QIcon, QPixmap
 
-from bluepass.util.misc import asset
+from bluepass.util import asset
 from bluepass.factory import singleton, instance
 
 from .socketapi import QtSocketApiClient

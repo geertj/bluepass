@@ -11,8 +11,7 @@ import sys
 import logging
 import argparse
 
-from bluepass import platform
-from bluepass.util import misc as util
+from bluepass import platform, util
 from bluepass.factory import singleton
 from bluepass.backend import Backend
 

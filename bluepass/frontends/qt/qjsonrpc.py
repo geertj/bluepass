@@ -10,6 +10,7 @@ from __future__ import absolute_import, print_function
 
 import json
 import socket
+import logging
 import collections
 import fnmatch
 
@@ -18,7 +19,6 @@ from PyQt4.QtCore import (QEvent, QObject, QSocketNotifier, QTimer, QEventLoop,
 
 from gruvi import jsonrpc
 from bluepass import platform
-from bluepass.util import logging
 
 
 __all__ = ['QJsonRpcError', 'QJsonRpcClient', 'QJsonRpcHandler', 'request',
