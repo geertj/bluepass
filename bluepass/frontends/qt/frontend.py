@@ -9,49 +9,37 @@
 from __future__ import absolute_import, print_function
 
 import sys
-import time
-import gruvi
 
 from bluepass import util
 from bluepass.factory import singleton
-from bluepass.frontend import Frontend
+from bluepass.component import Component
 
 from .application import Bluepass
-from .backend import QtBackendController
 from .socketapi import QtSocketApiClient
 
 
-class QtFrontend(Frontend):
+class QtFrontend(Component):
     """Qt frontend for Bluepass."""
 
     name = 'qt'
     description = 'GUI frontend based on Qt and PyQt4'
 
     @classmethod
-    def add_args(cls, parser):
+    def add_options(cls, parser):
         """Add command-line arguments."""
-        super(QtFrontend, cls).add_args(parser)
         group = parser.add_argument_group('Options for Qt frontend')
-        group.add_argument('--qt-options',
-                help='Comma-separated list of Qt internal options')
+        group.add_argument('--qt-options', metavar='OPTIONS', default='',
+                           help='Comma-separated list of Qt internal options')
 
     def run(self):
         """Start up the application."""
         args = [sys.argv[0]]
-        qt_options = self.options.get('qt_options', '')
-        args += map(lambda s: s.strip(), qt_options.split(','))
+        qt_options = self.options.qt_options
+        args += map(lambda o: '-{0}'.format(o.strip()), qt_options.split(','))
         app = singleton(Bluepass, args)
 
-        connect = self.options.get('connect')
-        if connect:
-            addr = gruvi.util.paddr(connect)
-        else:
-            bectrl = self.backend_controller = QtBackendController(self.options)
-            bectrl.start()
-            time.sleep(2)
-            addr = gruvi.util.paddr(bectrl.backend_address())
-
-        backend = singleton(QtSocketApiClient)
-        backend.connect(addr)
+        addr = util.paddr(self.options.connect)
+        socketapi = singleton(QtSocketApiClient)
+        socketapi.connect(addr)
 
         return app.exec_()

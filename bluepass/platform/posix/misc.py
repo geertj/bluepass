@@ -15,7 +15,7 @@ import fcntl
 import errno
 
 __all__ = ['get_username', 'get_homedir', 'get_appdir', 'get_sockdir', 
-           'is_wouldblock', 'LockError', 'lock_file', 'unlock_file']
+           'LockError', 'lock_file', 'unlock_file']
 
 
 def get_username(uid=None):
@@ -80,11 +80,6 @@ def get_sockdir():
     if st and stat.S_ISDIR(st.st_mode):
         return sockdir
     return get_appdir('bluepass')
-
-
-def is_wouldblock(e):
-    """Return whether the error number `e` corresponds to the EWOULDBLOCK error."""
-    return e in (errno.EWOULDBLOCK, errno.EAGAIN)
 
 
 class LockError(Exception):

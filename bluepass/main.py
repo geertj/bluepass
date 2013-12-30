@@ -6,126 +6,227 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
+from __future__ import absolute_import, print_function
+
 import os
 import sys
-import logging
+import time
+import json
+import errno
+import socket
 import argparse
+import subprocess
+import binascii
 
-from bluepass import platform, util
+import bluepass
+from bluepass import platform, util, logging
 from bluepass.factory import singleton
 from bluepass.backend import Backend
 
-
-def todict(obj):
-    """Convert an :class:`argparse.Namespace` instance into a dictionary.
-
-    Options that have a value of ``None`` are ignored.
-    """
-    d = {}
-    for key in dir(obj):
-        if key.startswith('_'):
-            continue
-        value = getattr(obj, key)
-        if value is not None:
-            d[key] = value
-    return d
+log = None
 
 
-def setup_logging(options, name):
-    """Set up the logging subsystem."""
-    logger = logging.getLogger('bluepass')
-    if options.log_stdout:
-        handler = logging.StreamHandler(sys.stdout)
-        format = '{} %(levelname)s %(message)s'.format(name.upper())
+def create_parser():
+    """Build the command-line parser."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-d', '--debug', action='store_true',
+                        help='Show debugging information.')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Be verbose.')
+    parser.add_argument('-V', '--version', action='store_true',
+                        help='Show version information and exit.')
+    parser.add_argument('-f', '--frontend', help='Select frontend to use.')
+    parser.add_argument('-c', '--connect', metavar='ADDRSPEC',
+                        help='Connect to existing backend (HOST:PORT or PATH)')
+    parser.add_argument('--log-stdout', action='store_true',
+                        help='Log to stdout even if not on a tty')
+    parser.add_argument('--data-dir', metavar='DIRECTORY',
+                        help='Specify data directory')
+    parser.add_argument('--auth-token', metavar='TOKEN',
+                        help='Backend authentication token')
+    parser.add_argument('--daemon', action='store_true',
+                        help='Do not kill backend on exit')
+    parser.add_argument('--list-frontends', action='store_true',
+                        help='List available frontends and exit.')
+    parser.add_argument('--run-backend', action='store_true', help='Run the backend')
+    parser.add_argument('--timeout', type=int, help='Backend timeout', default=2)
+    return parser
+
+
+def start_backend(options):
+    args = [sys.executable, '-mbluepass.main', '--run-backend'] + sys.argv[1:]
+    process = subprocess.Popen(args)
+    log.debug('started backend with pid {}', process.pid)
+    return process
+
+def stop_backend(options, process, sock):
+    # Try to stop our child. First nicely, then progressively less nice.
+    start_time = time.time()
+    elapsed = 0
+    while elapsed < 3*options.timeout:
+        if sock:
+            log.debug('sending "stop" command to backend')
+            request = { 'id': 'main.1', 'method': 'stop', 'jsonrpc': '2.0' }
+            sock.send(json.dumps(request).encode('ascii'))
+            sock.close()
+            sock = None
+        elif elapsed > options.timeout:
+            log.debug('calling terminate() on backend')
+            process.terminate()
+        elif elapsed > 2*options.timeout:
+            log.debug('calling kill() on backend')
+            process.kill()
+        if process.poll() is not None:
+            break
+        time.sleep(0.1)
+        elapsed = time.time() - start_time
+    exitstatus = process.returncode
+    if exitstatus is None:
+        log.error('could not stop backend after {} seconds', elapsed)
+        return False
+    elif exitstatus:
+        log.error('backend exited with status {}', exitstatus)
     else:
-        logdir = options.data_dir or platform.get_appdir('bluepass')
-        logname = os.path.join(logdir, '{}.log'.format(name))
-        handler = logging.FileHandler(logname, 'w')
-        format = '%(asctime)s %(levelname)s %(message)s'
-    logger.setLevel(logging.DEBUG if options.debug else logging.INFO)
-    handler.setFormatter(logging.Formatter(format))
-    logger.addHandler(handler)
+        log.debug('backend exited after {} seconds', elapsed)
+    return True
+
+def connect_backend(options):
+    runfile = os.path.join(options.data_dir, 'backend.run')
+    sock = None
+    start_time = time.time()
+    elapsed = 0
+    while elapsed < options.timeout:
+        st = util.try_stat(runfile)
+        if st is None:
+            continue
+        with open(runfile) as fin:
+            buf = fin.read()
+        runinfo = json.loads(buf)
+        if not isinstance(runinfo, dict):
+            break
+        addr = util.paddr(runinfo['listen'])
+        try:
+            sock = util.create_connection(addr, timeout=0.2)
+        except (OSError, IOError) as e:
+            if e.errno and e.errno not in (errno.ENOENT, errno.ECONNREFUSED):
+                raise
+        else:
+            break
+        time.sleep(0.1)
+        elapsed = time.time() - start_time
+    log.debug('backed started up in {} seconds', elapsed)
+    return sock, runinfo
 
 
-def frontend():
-    """Frontend entry point."""
+def create_auth_token():
+    """Return a new auth token."""
+    return binascii.hexlify(os.urandom(32)).decode('ascii')
+
+
+def get_listen_address(options):
+    """Return the default listen address."""
+    if hasattr(os, 'fork'):
+        addr = os.path.join(options.data_dir, 'backend.sock')
+        util.try_unlink(addr)
+    else:
+        addr = 'localhost:0'
+    return addr
+
+
+def main():
+    """Main entry point."""
 
     # First get the --frontend parameter so that we can its command-line
     # options.
 
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument('-f', '--frontend', nargs='?')
-    opts, _ = parser.parse_known_args()
-    frontend = opts.frontend and opts.frontend[0]
+    options, _ = parser.parse_known_args()
 
     for fe in platform.get_frontends():
-        if fe.name == opts.frontend or opts.frontend is None:
+        if fe.name == options.frontend or options.frontend is None:
             Frontend = fe
             break
     else:
-        sys.stderr.write('Error: no such frontend: {}'.format(opts.frontend))
-        sys.stderr.write('Use --list-frontends to list available frontends')
+        print('Error: no such frontend: {0}'.format(options.frontend), file=sys.stderr)
+        print('Use --list-frontends to list available frontends', file=sys.stderr)
         return 1
 
     # Now build the real parser and parse arguments
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-r', '--data-dir',
-                        help='Use alternate data directory')
-    parser.add_argument('-d', '--debug', action='store_true',
-                        help='Show debugging information')
-    parser.add_argument('--log-stdout', action='store_true',
-                        help='Log to standard output [default: backend.log]')
-    parser.add_argument('-v', '--version', action='store_true',
-                        help='Show version information and exit')
-    parser.add_argument('-f', '--frontend',
-                        help='Select frontend to use')
-    parser.add_argument('--list-frontends', action='store_true',
-                        help='List available frontends and exit')
+    parser = create_parser()
+    Frontend.add_options(parser)
+    Backend.add_options(parser)
+    options = parser.parse_args()
 
-    Frontend.add_args(parser)
-    Backend.add_args(parser)
+    # Early exits?
 
-    opts = parser.parse_args()
-
-    setup_logging(opts, '{}-frontend'.format(Frontend.name))
-
-    if opts.version:
-        print('Bluepass version {}'.format(_version.verion))
+    if options.version:
+        print('Bluepass version {0}'.format(bluepass.__version__))
         return 0
 
-    if opts.list_frontends:
+    if options.list_frontends:
         print('Available frontends:')
         for fe in platform.get_frontends():
-            print('{:-10}: {}'.format(fe.name, fe.description))
+            print('* {0:10}: {1}'.format(fe.name, fe.description))
         return 0
 
-    # Create frontend and pass control to it
+    # Option defaults
 
-    frontend = singleton(Frontend, todict(opts))
-    ret = frontend.run()
+    if options.connect and options.run_backend:
+        print('Error: specify either --connect or --run-backend but not both', file=sys.stderr)
+        return 1
+
+    if options.data_dir is None:
+        options.data_dir = platform.get_appdir('bluepass')
+
+    if options.auth_token is None:
+        options.auth_token = os.environ.get('BLUEPASS_AUTH_TOKEN')
+
+    if options.listen is None:
+        options.listen = get_listen_address(options)
+
+
+    # Unless we are spawning the backend and can create our own auth token,
+    # we need the user to specify it.
+
+    startbe = not (options.connect or options.run_backend)
+    if options.auth_token is None:
+        if not startbe:
+            print('Error: --auth-token or $BLUEPASS_AUTH_TOKEN is required',
+                        file=sys.stderr)
+            return 1
+        options.auth_token = create_auth_token()
+        os.environ['BLUEPASS_AUTH_TOKEN'] = options.auth_token
+
+    global log
+    logging.setup_logging(options, 'main')
+    log = logging.get_logger()
+
+    # Need to start up the backend?
+
+    if startbe:
+        process = start_backend(options)
+        sock, runinfo = connect_backend(options)
+        options.connect = runinfo['listen']
+
+    # Run either the front-end or the backend
+
+    if options.run_backend:
+        logging.setup_logging(options, 'backend')
+        backend = singleton(Backend, options)
+        ret = backend.run()
+    else:
+        logging.setup_logging(options, 'frontend')
+        frontend = singleton(Frontend, options)
+        ret = frontend.run()
+
+    # Back from frontend or backend.
+
+    if startbe and not options.daemon:
+        stop_backend(options, process, sock)
 
     return ret
 
 
-def backend():
-    """Start up the backend."""
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-r', '--data-dir',
-                        help='Use alternate data directory')
-    parser.add_argument('-d', '--debug', action='store_true',
-                        help='Show debugging information')
-    parser.add_argument('--log-stdout', action='store_true',
-                        help='Log to standard output [default: backend.log]')
-    parser.add_argument('-v', '--version', action='store_true',
-                        help='Show version information and exit')
-
-    Backend.add_args(parser)
-    opts = parser.parse_args()
-
-    setup_logging(opts, 'backend')
-
-    backend = Backend(todict(opts))
-    ret = backend.run()
-
-    return ret
+if __name__ == '__main__':
+    sys.exit(main())

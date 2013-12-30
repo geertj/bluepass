@@ -9,6 +9,7 @@
 from __future__ import absolute_import, print_function
 
 import json
+import errno
 import socket
 import logging
 import collections
@@ -26,7 +27,7 @@ __all__ = ['QJsonRpcError', 'QJsonRpcClient', 'QJsonRpcHandler', 'request',
 
 # re-export these to our consumers as module-level objects
 from gruvi.jsonrpc import (create_request, create_response, create_error,
-                           create_notification, errno)
+                           create_notification)
 
 
 class _Dispatch(QEvent):
@@ -102,7 +103,7 @@ class QJsonRpcClient(QObject):
             try:
                 buf = self._socket.recv(4096)
             except socket.error as e:
-                if platform.is_wouldblock(e.errno):
+                if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
                     break
                 self._log.error('recv() error {0}'.format(e.errno))
                 self.close()
@@ -137,7 +138,7 @@ class QJsonRpcClient(QObject):
             try:
                 nbytes = self._socket.send(self._outbuf)
             except socket.error as e:
-                if platform.is_wouldblock(e.errno):
+                if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
                     break
                 self.logger.error('send() error {0}'.format(e.errno))
                 self.close()

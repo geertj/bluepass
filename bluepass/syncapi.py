@@ -157,7 +157,7 @@ class SyncAPIClient(object):
         This returns the HTTPResponse object on success, or None on failure.
         """
         headers = [] if headers is None else headers[:]
-        headers.append(('User-Agent', 'Bluepass/%s' % _version.version))
+        headers.append(('User-Agent', 'Bluepass/%s' % _version.__version__))
         headers.append(('Accept', 'text/json'))
         if body is None:
             body = b''

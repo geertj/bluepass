@@ -45,31 +45,26 @@ def gethostname():
     return hostname
 
 
-def parse_address(s):
+def paddr(s):
     """Parse a string form of a socket address."""
     return gruvi.util.paddr(s)
 
-
-def unparse_address(address):
+def saddr(address):
     """Convert a socket address into a string form."""
     return gruvi.util.saddr(address)
 
-
 def create_connection(address, timeout=None):
-    """Connect to *address* and return the socket object.
-    
-    For AF_INET/AF_INET6 socket, *address* must be a (host, port) tuple.
-    For AF_UNIX sockets, it must be a string.
-
-    This function is like ``socket.create_connection`` but also supports
-    AF_UNIX.
-    """
-    if isinstance(address, str):
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(timeout)
-        sock.connect(address)
+    """Create a connection to *address* and return the socket."""
+    if isinstance(address, tuple) and ':' in address[0]:
+        sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM, 0)
+    elif isinstance(address, tuple) and '.' in address[0]:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+    elif isinstance(address, str):
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM, 0)
     else:
-        sock = socket.create_connection(address, timeout)
+        raise ValueError('expecting IPv4/IPv6 tuple, or path')
+    sock.settimeout(timeout)
+    sock.connect(address)
     return sock
 
 
@@ -83,34 +78,35 @@ def try_stat(fname):
         st = None
     return st
 
-
 def try_unlink(fname):
-    """Try to unlink a path. Do not raise an error if the file does not exist."""
+    """Try to stat a path. Do not raise an error if the file does not exist."""
     try:
-        os.unlink(fname)
+        st = os.unlink(fname)
     except OSError as e:
         if e.errno != errno.ENOENT:
             raise
+        st = None
+    return st
 
 
-def create_listener(address, backlog=10):
-    """Create a listen socket bound to *address* and return it.
-
-    For AF_INET/AF_INET6 socket, *address* must be a (host, port) tuple.
-    For AF_UNIX sockets, it must be a string.
-    """
-    if isinstance(address, str):
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try_unlink(address)
-        sock.bind(address)
-        # The chmod() here is just damage control. If umask is not set
-        # correctly there is a race condition.
-        os.chmod(address, stat.S_IRUSR|stat.S_IWUSR)
+def replace(src, dst):
+    """Replace *src* with *dst*. Atomic if the Platform or Python version
+    supports it."""
+    if hasattr(os, 'replace'):
+        os.replace(src, dst)
+    elif hasattr(os, 'fork'):
+        # posix has atomic rename()
+        os.rename(src, dst)
     else:
-        result = socket.getaddrinfo(address[0], address[1], socket.AF_UNSPEC,
-                                    socket.SOCK_STREAM)
-        res = result[0]
-        sock = socket.socket(*res[:3])
-        sock.bind(res[4])
-    sock.listen(backlog)
-    return sock
+        # not atomic Python <= 3.2 on Windows
+        try_unlink(dst)
+        os.rename(src, dst)
+
+
+def write_atomic(fname, contents):
+    """Atomically write *contents* to *fname* by creating a temporarily file
+    and renaming it in place."""
+    tmpname = '{0}-{1}.tmp'.format(fname, os.getpid())
+    with open(tmpname, 'w') as fout:
+        fout.write(contents)
+    replace(tmpname, fname)

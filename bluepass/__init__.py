@@ -5,3 +5,7 @@
 # Bluepass is free software available under the GNU General Public License,
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
+
+from __future__ import absolute_import, print_function
+
+from ._version import __version__

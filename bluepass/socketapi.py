@@ -65,7 +65,7 @@ class JsonRpcHandler(object):
         method = message.get('method')
         if method is None:
             return
-        handler = getattr(self, method)
+        handler = getattr(self, method, None)
         if handler is None or not getattr(handler, 'method', False):
             return
         args = message.get('params', ())
@@ -95,6 +95,11 @@ class SocketAPIHandler(JsonRpcHandler):
         self.crypto = instance(CryptoProvider)
         self.pairdata = {}
 
+    @method()
+    def stop(self):
+        from .backend import Backend
+        instance(Backend).stop()
+
     # Version
 
     @method()
@@ -103,11 +108,7 @@ class SocketAPIHandler(JsonRpcHandler):
 
         Returns a dictionary containing at least the key "version".
         """
-        version_info = {}
-        for name in dir(_version):
-            if name.startswith('_'):
-                continue
-            version_info[name] = getattr(_version, name)
+        version_info = {'version': _version.__version__}
         return version_info
 
     # Model methods

@@ -19,8 +19,8 @@ if hasattr(os, 'fork'):
     elif sys.platform == 'darwin':
         from bluepass.platform.darwin.misc import *
 
-    #default_listen_address = os.path.join(get_sockdir(), 'bluepass-dev.sock')
-    default_listen_address = 'localhost:0'
+    default_listen_address = os.path.join(get_sockdir(), 'bluepass-dev.sock')
+    #default_listen_address = 'localhost:0'
 
 # Windows
 
