@@ -8,7 +8,6 @@
 
 from __future__ import absolute_import, print_function
 
-import six
 from json import *
 import itertools
 from gruvi import compat
@@ -191,7 +190,7 @@ class Unpacker(object):
             raise UnpackError('expecting integer')
         elif typ == 'u' and not (isinstance(ctx, int) and ctx >= 0):
             raise UnpackError('expecting unsigned integer')
-        elif typ == 's' and not isinstance(ctx, six.string_types):
+        elif typ == 's' and not isinstance(ctx, compat.string_types):
             raise UnpackError('expecting string')
         elif typ == 'f' and not isinstance(ctx, float):
             raise UnpackError('expecting float')
