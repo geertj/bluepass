@@ -11,7 +11,6 @@ import re
 import sys
 import time
 import logging
-import traceback
 import binascii
 import socket
 import ssl
@@ -42,9 +41,8 @@ def init_syncapi_ssl(pemdir):
     init_pem_directory(pemdir)
     SyncAPIClient.pem_directory = pemdir
     SyncAPIServer.pem_directory = pemdir
-    if not compat.PY3:
-        from bluepass.ssl import patch_gruvi_ssl
-        patch_gruvi_ssl()
+    from bluepass.ssl import patch_ssl_wrap_socket
+    patch_ssl_wrap_socket()
 
 def init_pem_directory(pemdir):
     fname = os.path.join(pemdir, 'dhparams.pem')

@@ -42,7 +42,7 @@ def check(s):
     if not isinstance(s, compat.string_types):
         raise TypeError('expecting string')
     try:
-        base64.b64decode(s, validate=True)
+        base64.b64decode(s)
     except binascii.Error:
         return False
     return True

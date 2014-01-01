@@ -43,7 +43,7 @@ def decode_txt(txt):
     """Decode a list of TXT records that we get from Avahi into a dict."""
     result = {}
     for item in txt:
-        item = b''.join(map(lambda x: bytes([x]), item)).decode('utf8')
+        item = bytearray(item).decode('utf8')
         name, value = item.split('=')
         result[name] = value
     return result

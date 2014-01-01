@@ -35,21 +35,25 @@ class SSLSocket(ssl.SSLSocket):
         # constructor, and then later patch it to be a server socket
         # (_sslex._set_accept_state()). Fortunately this is solved in Python
         # 3.x.
-        self.dhparams = kwargs.pop('dhparams', '')
-        self.dh_single_use = kwargs.pop('dh_single_use', False)
-        self.server_side = kwargs.pop('server_side', False)
-        self.ciphers = kwargs.pop('ciphers', None)
+        self._sslex_dhparams = kwargs.pop('dhparams', '')
+        self._sslex_dh_single_use = kwargs.pop('dh_single_use', False)
+        self._sslex_server_side = kwargs.pop('server_side', False)
+        self._sslex_ciphers = kwargs.pop('ciphers', None)
         super(SSLSocket, self).__init__(*args, **kwargs)
 
     def do_handshake(self):
         """Set DH parameters prior to handshake."""
-        if self.dhparams:
-            _sslex.set_dh_params(self._sslobj, self.dhparams, self.dh_single_use)
-        if self.ciphers:
-            _sslex.set_ciphers(self._sslobj, self.ciphers)
+        if self._sslex_dhparams:
+            _sslex.set_dh_params(self._sslobj, self._sslex_dhparams,
+                                 self._sslex_dh_single_use)
+            self._sslex_dhparms = None
+        if self._sslex_ciphers:
+            _sslex.set_ciphers(self._sslobj, self._sslex_ciphers)
+            self._sslex_ciphers = None
         # Now make it a server socket again if we need to..
-        if self.server_side:
+        if self._sslex_server_side:
             _sslex._set_accept_state(self._sslobj)
+            self._sslex_server_side = None
         super(SSLSocket, self).do_handshake()
 
     def get_channel_binding(self, typ='tls-unique'):
@@ -61,12 +65,12 @@ class SSLSocket(ssl.SSLSocket):
         return _sslex.get_channel_binding(self._sslobj)
 
 
-def patch_gruvi_ssl():
-    """Monkey patch gruvi.ssl to use our extended SSL socket."""
+def patch_ssl_wrap_socket():
+    """Monkey patch ssl.wrap_socket to use our extended SSL socket."""
     from gruvi import compat
     if compat.PY3:
         return
-    import gruvi.ssl
-    def wrap_socket(*args, **kwargs):
-        return SSLSocket(*args, **kwargs)
-    gruvi.ssl.wrap_socket = wrap_socket
+    import ssl
+    def wrap_socket(sock, **kwargs):
+        return SSLSocket(sock, **kwargs)
+    ssl.wrap_socket = wrap_socket
