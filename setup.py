@@ -150,7 +150,7 @@ def main():
                       libraries=['ssl', 'crypto'], **extargs)
         ],
         package_data = {'bluepass': ['assets/png/*', 'assets/diceware/*']},
-        install_requires = [],
+        install_requires = ['pycparser', 'cffi', 'gruvi'],
         entry_points = {'console_scripts': ['bluepass = bluepass.main:main']},
         test_suite = 'nose.collector',
         **version_info
