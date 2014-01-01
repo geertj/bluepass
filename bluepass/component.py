@@ -26,6 +26,11 @@ class Component(object):
     def add_options(cls, parser):
         """Initialize command-line options."""
 
+    @classmethod
+    def check_options(cls, options):
+        """Check parsed command-line options."""
+        return True
+
     def run(self):
         """Run the component.
 

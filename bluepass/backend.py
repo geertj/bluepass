@@ -26,6 +26,16 @@ from bluepass.syncapi import SyncAPIServer, SyncAPIPublisher, init_syncapi_ssl
 from bluepass.syncer import Syncer
 
 
+def get_listen_address(options):
+    """Return the default listen address."""
+    if hasattr(os, 'fork'):
+        addr = os.path.join(options.data_dir, 'backend.sock')
+        util.try_unlink(addr)
+    else:
+        addr = 'localhost:0'
+    return addr
+
+
 class Backend(Component):
     """The Bluepass backend."""
 
@@ -43,7 +53,14 @@ class Backend(Component):
         group.add_argument('-l', '--listen', metavar='ADDRSPEC',
                            help='The JSON-RPC listen address (HOST:PORT or PATH)')
         group.add_argument('--trace', action='store_true',
-                           help='Trace JSON-RPC messages (to DATA_DIR/backend.trace)')
+                           help='Trace JSON-RPC messages')
+
+    @classmethod
+    def check_options(cls, options):
+        """Check parsed command-line options."""
+        if not options.listen:
+            options.listen = get_listen_address(options)
+        return True
 
     def run(self):
         """Initialize the backend and run its main loop."""

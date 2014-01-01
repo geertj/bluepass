@@ -122,16 +122,6 @@ def create_auth_token():
     return binascii.hexlify(os.urandom(32)).decode('ascii')
 
 
-def get_listen_address(options):
-    """Return the default listen address."""
-    if hasattr(os, 'fork'):
-        addr = os.path.join(options.data_dir, 'backend.sock')
-        util.try_unlink(addr)
-    else:
-        addr = 'localhost:0'
-    return addr
-
-
 def main():
     """Main entry point."""
 
@@ -170,21 +160,21 @@ def main():
             print('* {0:10}: {1}'.format(fe.name, fe.description))
         return 0
 
-    # Option defaults
+    # Check options and fill in defaults
+
+    if options.data_dir is None:
+        options.data_dir = platform.get_appdir('bluepass')
+    if options.auth_token is None:
+        options.auth_token = os.environ.get('BLUEPASS_AUTH_TOKEN')
+
+    if not Frontend.check_options(options):
+        return 1
+    if not Backend.check_options(options):
+        return 1
 
     if options.connect and options.run_backend:
         print('Error: specify either --connect or --run-backend but not both', file=sys.stderr)
         return 1
-
-    if options.data_dir is None:
-        options.data_dir = platform.get_appdir('bluepass')
-
-    if options.auth_token is None:
-        options.auth_token = os.environ.get('BLUEPASS_AUTH_TOKEN')
-
-    if options.listen is None:
-        options.listen = get_listen_address(options)
-
 
     # Unless we are spawning the backend and can create our own auth token,
     # we need the user to specify it.
