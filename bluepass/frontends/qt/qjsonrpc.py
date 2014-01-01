@@ -19,7 +19,7 @@ from PyQt4.QtCore import (QEvent, QObject, QSocketNotifier, QTimer, QEventLoop,
                           QCoreApplication)
 
 from gruvi import jsonrpc
-from bluepass import platform
+from bluepass import platform, util
 
 
 __all__ = ['QJsonRpcError', 'QJsonRpcClient', 'QJsonRpcHandler', 'request',
@@ -72,21 +72,7 @@ class QJsonRpcClient(QObject):
 
     def connect(self, address):
         """Connect to a JSON-RPC server at *address*."""
-        if isinstance(address, tuple) and ':' in address[0]:
-            sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM, 0)
-        elif isinstance(address, tuple) and '.' in address[0]:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
-        elif isinstance(address, str):
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM, 0)
-        elif hasattr(address, 'recv'):
-            sock = address
-        else:
-            raise ValueError('expecting IPv4/IPv6 tuple, or path')
-        if sock is not address:
-            sock.settimeout(2)
-            # Note: this is a blocking connect(). Should be OK since the daemon
-            # is usually local.
-            sock.connect(address)
+        sock = util.create_connection(address, self._timeout)
         sock.settimeout(0)
         self._read_notifier = QSocketNotifier(sock.fileno(), QSocketNotifier.Read, self)
         self._read_notifier.activated.connect(self._do_read)
