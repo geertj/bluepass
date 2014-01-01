@@ -16,33 +16,34 @@ import gruvi.logging
 
 __all__ = ['get_logger', 'setup_logging']
 
-_default_name = 'main'
+_default_name = 'bluepass'
 
 
 def get_logger(context='', name=None):
     """Return a logger for *context*."""
     if name is None:
         name = _default_name
-    logger_name = 'bluepass.{0}'.format(name)
-    return gruvi.logging.get_logger(context, logger_name)
+    return gruvi.logging.get_logger(context, name)
 
 
-def setup_logging(options, name):
-    """Configure logging destination."""
+def set_default_logger(name):
     global _default_name
     _default_name = name
-    logger_name = 'bluepass.{0}'.format(name)
-    logger = logging.getLogger(logger_name)
+
+
+def setup_logging(options):
+    """Configure logging destination."""
+    logger = logging.getLogger()
     if sys.stdout.isatty() or options.log_stdout:
         handler = logging.StreamHandler(sys.stdout)
-        format = '{0} %(levelname)s %(message)s'.format(name.upper())
-        handler.setFormatter(logging.Formatter(format))
+        logfmt = '%(name)s %(levelname)s %(message)s'
+        handler.setFormatter(logging.Formatter(logfmt))
         logger.addHandler(handler)
     if not options.log_stdout:
-        logfile = os.path.join(options.data_dir, '{0}.log'.format(name))
+        logfile = os.path.join(options.data_dir, 'bluepass.log')
         handler = logging.FileHandler(logfile, 'w')
-        format = '%(asctime)s %(levelname)s %(message)s'
-        handler.setFormatter(logging.Formatter(format))
+        logfmt = '%(asctime)s %(name)s %(levelname)s %(message)s'
+        handler.setFormatter(logging.Formatter(logfmt))
         logger.addHandler(handler)
     level = logging.DEBUG if options.debug else \
                 logging.INFO if options.verbose else logging.WARNING

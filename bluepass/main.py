@@ -189,8 +189,8 @@ def main():
         os.environ['BLUEPASS_AUTH_TOKEN'] = options.auth_token
 
     global log
-    logging.setup_logging(options, 'main')
-    log = logging.get_logger()
+    logging.setup_logging(options)
+    log = logging.get_logger(name='main')
 
     # Need to start up the backend?
 
@@ -202,11 +202,11 @@ def main():
     # Run either the front-end or the backend
 
     if options.run_backend:
-        logging.setup_logging(options, 'backend')
+        logging.set_default_logger('backend')
         backend = singleton(Backend, options)
         ret = backend.run()
     else:
-        logging.setup_logging(options, 'frontend')
+        logging.set_default_logger('frontend.{0}'.format(fe.name))
         frontend = singleton(Frontend, options)
         ret = frontend.run()
 
