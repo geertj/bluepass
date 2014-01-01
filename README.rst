@@ -2,64 +2,59 @@
 Welcome to Bluepass!!
 =====================
 
-Bluepass is a next-generation password manager. Currently it is available as a
-beta version, and needs to be installed from source. Binary packages will be
-provided in the future.
+Bluepass is a secure password manager with peer-to-peer sync built in.
+Currently it is an early beta version, and needs to be installed from source.
 
-NOTE: The instructions below install Bluepass in a virtualenv. This way you
-don't need to update or replace system provided packages of e.g. gevent.
+Generic installation instructions
+=================================
 
-Debian/Ubuntu based systems
-===========================
+The instructions below are generic installation instructions. You can find
+specific instructions for Ubuntu and Fedora further down. Bluepass should work
+on any recent Linux distribution. It should also work on Mac OSX and Windows,
+but on these platforms P2P sync is not yet available. 
 
-Execute the following steps::
+ * Make sure you have a supported version of Python installed. The preferred
+   version is Python 3.3, but 2.7 and 2.6 also work.
+ * Make sure you can compile and install C extensions for Python. This means
+   that you need Python development files, a C compiler, make and pip. You
+   also need git to check out the Bluepass source code.
+ * Install dependencies: PyQt4, libffi including development files and openssl
+   including development files.
+ * If you want to install in a virtualenv, set one up and activate it.
+ * Clone the sources from Github: ``git clone https://github.com/geertj/bluepass``
+ * ``pip install -r requirements.txt`` from the bluepass directory.
+ * ``python setup.py install``
 
-  $ sudo apt-get install gcc python-dev cython python-qt4 libdbus-1-dev \
-          libssl-dev python-virtualenv python-six python-greenlet
-  $ virtualenv --distribute --system-site-packages bluepass-dev
+Installing on Ubuntu and Fedora
+===============================
+
+Ubuntu 13.04 and later, and Fedora 19 and later provide Python 3.3. On these
+distributions it is recommended to use Python3 for running Bluepass.
+
+First you need to install dependencies. Apart from Gruvi, all dependencies are
+provided by the distribution. On Ubuntu::
+
+  $ sudo apt-get -y install gcc make python3-dev python3-pyqt4 python3-pip \
+        libssl-dev libffi-dev git curl
+
+While on Fedora::
+
+  $ sudo yum -y install gcc make python3-devel python3-PyQt4 python3-pip \
+        openssl-devel libffi-devel git curl
+
+Then run the following commands. These commands install Bluepass from Github
+into a virtualenv. Pip itself is installed from source because of
+https://github.com/pypa/pip/issues/1408. ::
+
+  $ pyvenv-3.3 --system-site-packages bluepass-dev
   $ . bluepass-dev/bin/activate
-  $ pip install --upgrade git+git://github.com/surfly/gevent.git@1.0rc2#egg=gevent
-  $ git clone https://github.com/geertj/bluepass
-  $ cd bluepass
+  $ curl -O https://pypi.python.org/packages/source/p/pip/pip-1.4.1.tar.gz
+  $ tar xvfz pip-1.4.1.tar.gz && pushd pip-1.4.1 && python setup.py install && popd
+  $ git clone https://github.com/geertj/bluepass && pushd bluepass
+  $ pip install -r requirements.txt
   $ python setup.py install
 
-Red Hat/Fedora based systems
-============================
+To run bluepass, use "bluepass" from the command line.
 
-Steps::
-
-  $ sudo yum install gcc python-devel Cython PyQt4 dbus-devel openssl-devel \
-        python-virtualenv python-six python-greenlet
-  $ virtualenv --distribute --system-site-packages bluepass-dev
-  $ . bluepass-dev/bin/activate
-  $ pip install --upgrade git+git://github.com/surfly/gevent.git@1.0rc2#egg=gevent
-  $ git clone https://github.com/geertj/bluepass
-  $ cd bluepass
-  $ python setup.py install
-
-Mac OSX
-=======
-
-NOTE: Bluepass on Mac OSX currently does not support P2P synchronization.
-
-Preparation:
-
-1. Install Xcode via the Mac App Store. This is a free download.
-2. Install the Xcode command-line tools. Start up Xcode, select Xcode ->
-   Preferences -> Components, and then install the "Command Line Tools"
-   component.
-3. Install Homebrew from http://brew.sh/
-
-Steps::
-
-  $ brew install pyqt git
-  $ sudo easy_install virtualenv
-  $ virtualenv --distribute bluepass-dev
-  $ echo /usr/local/lib/python2.7/site-packages > \
-        bluepass-dev/lib/python2.7/site-packages/brew.pth
-  $ bluepass-dev/bin/activate
-  $ pip install six cython greenlet
-  $ pip install git+git://github.com/surfly/gevent.git@1.0rc2#egg=gevent
-  $ git clone https://github.com/geertj/bluepass
-  $ cd bluepass
-  $ python setup.py install
+On previous versions of Ubuntu and Fedora use the generic installation
+instructions.
