@@ -86,6 +86,10 @@ class Backend(Component):
 
         self._log.debug('initializing control API')
         socketapi = singleton(SocketAPIServer)
+        if self.options.trace:
+            tracename = os.path.join(self.options.data_dir, 'backend.trace')
+            tracefile = open(tracename, 'w')
+            socketapi._set_tracefile(tracefile)
         addr = gruvi.util.paddr(self.options.listen)
         socketapi.listen(addr)
 

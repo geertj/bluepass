@@ -8,7 +8,7 @@
 
 import binascii
 
-from bluepass import _version, util
+from bluepass import _version, util, json
 from bluepass.factory import instance
 from bluepass.error import StructuredError
 from bluepass.crypto import CryptoProvider
@@ -458,10 +458,25 @@ class SocketAPIHandler(JsonRpcHandler):
         client.close()
 
 
+def jsonrpc_type(obj):
+    """Return a string identify a JSON-RPC message."""
+    if obj.get('method') and obj.get('id'):
+        return 'request'
+    elif obj.get('method'):
+        return 'notification'
+    elif obj.get('error'):
+        return 'error'
+    elif obj.get('result'):
+        return 'response'
+    else:
+        return 'unknown'
+
+
 class SocketAPIServer(JsonRpcServer):
 
     def __init__(self):
-        super(SocketAPIServer, self).__init__(SocketAPIHandler(), _trace=True)
+        super(SocketAPIServer, self).__init__(SocketAPIHandler())
+        self._tracefile = None
         instance(Model).add_callback(self._forward_events)
         instance(Locator).add_callback(self._forward_events)
         instance(SyncAPIPublisher).add_callback(self._forward_events)
@@ -472,3 +487,21 @@ class SocketAPIServer(JsonRpcServer):
             message = jsonrpc.create_notification(event, args)
             self.send_message(client, message)
 
+    def _set_tracefile(self, tracefile):
+        self._tracefile = tracefile
+
+    def _log_request(self, message):
+        if not self._tracefile:
+            return
+        self._tracefile.write('/* <= incoming {0}, version {1} */\n'.format
+                        (jsonrpc_type(message), message.get('jsonrpc', '1.0')))
+        self._tracefile.write(json.dumps_pretty(message))
+        self._tracefile.write('\n\n')
+
+    def _log_response(self, message):
+        if not self._tracefile:
+            return
+        self._tracefile.write('/* => outgoing {0}, version {1} */\n'.format
+                        (jsonrpc_type(message), message.get('jsonrpc', '1.0')))
+        self._tracefile.write(json.dumps_pretty(message))
+        self._tracefile.write('\n\n')

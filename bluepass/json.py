@@ -15,8 +15,12 @@ from gruvi import compat
 
 def dumps_c14n(obj):
     """Serialize an object as canonicalized JSON."""
-    return dumps(obj, ensure_ascii=True, sort_keys=True,
-                indent=None, separators=(',',':'))
+    return dumps(obj, sort_keys=True, indent=None, separators=(',',':'))
+
+def dumps_pretty(obj):
+    """Pretty-print a JSON message."""
+    return dumps(obj, sort_keys=True, indent=2)
+
 
 def try_loads(s, cls=None):
     """Load the JSON object in `s` or return None in case there is an error."""
