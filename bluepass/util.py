@@ -13,13 +13,13 @@ import stat
 import errno
 import socket
 
+from gruvi import compat
 import gruvi.util
 
 
 def asset(*path):
     """Return the path of an asset specified by *path*."""
     dname, _ = os.path.split(__file__)
-    dname, _ = os.path.split(dname)
     base = os.path.join(dname, 'assets')
     st = try_stat(base)
     if st is None or not stat.S_ISDIR(st.st_mode):
@@ -59,7 +59,7 @@ def create_connection(address, timeout=None):
         sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM, 0)
     elif isinstance(address, tuple) and '.' in address[0]:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
-    elif isinstance(address, str):
+    elif isinstance(address, compat.string_types):
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM, 0)
     else:
         raise ValueError('expecting IPv4/IPv6 tuple, or path')
