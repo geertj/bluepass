@@ -8,19 +8,19 @@
 
 from __future__ import absolute_import, print_function
 
-from .unit import UnitTest
+from unit import *
 from bluepass.database import Database
 
 
 class TestDatabase(UnitTest):
     """Unit test suite for Database."""
 
-    def setup(self):
+    def setUp(self):
         self.filename = self.tempfile()
         self.database = Database(self.filename)
         self.database.create_table('items')
 
-    def teardown(self):
+    def tearDown(self):
         self.database.close()
 
     def test_open_close(self):
@@ -166,3 +166,7 @@ class TestDatabase(UnitTest):
         docs = db.findall('items')
         assert len(docs) == 1
         assert docs[0] != doc
+
+
+if __name__ == '__main__':
+    unittest.main()

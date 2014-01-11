@@ -12,19 +12,19 @@ import time
 import socket
 import logging
 
-from .unit import UnitTest, assert_raises
+from unit import *
 from bluepass.database import *
 from bluepass.model import *
 
 
 class TestModel(UnitTest):
 
-    def setup(self):
+    def setUp(self):
         self.filename = self.tempfile()
         self.database = Database(self.filename)
         self.model = Model(self.database)
 
-    def teardown(self):
+    def tearDown(self):
         self.database.close()
 
     def test_config(self):
@@ -107,12 +107,12 @@ class TestModel(UnitTest):
         version = model.add_version(vault['id'], {'foo': 'bar'})
         assert version['foo'] == 'bar'
         model.lock_vault(vault['id'])
-        err = assert_raises(ModelError, model.get_version, vault['id'], version['id'])
+        err = self.assertRaises(ModelError, model.get_version, vault['id'], version['id'])
         assert err.error_name == 'Locked'
-        err = assert_raises(ModelError, model.unlock_vault, vault['id'], 'Passw!rd')
+        err = self.assertRaises(ModelError, model.unlock_vault, vault['id'], 'Passw!rd')
         assert err.error_name == 'WrongPassword'
         assert model.vault_is_locked(vault['id'])
-        err = assert_raises(ModelError, model.get_version, vault['id'], version['id'])
+        err = self.assertRaises(ModelError, model.get_version, vault['id'], version['id'])
         assert err.error_name == 'Locked'
         model.unlock_vault(vault['id'], 'Passw0rd')
         assert not model.vault_is_locked(vault['id'])
@@ -258,3 +258,7 @@ class TestModel(UnitTest):
         version1 = model1.get_version(vault1['id'], version2['id'])
         assert version1 is not None
         assert version1['foo'] == 'bar'
+
+
+if __name__ == '__main__':
+    unittest.main()
