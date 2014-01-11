@@ -218,6 +218,7 @@ class TestModel(UnitTest):
         for key in vault1['keys']:
             keys[key] = { 'key': vault1['keys'][key]['public'],
                           'keytype': vault1['keys'][key]['keytype'] }
+        certinfo['restrictions'] = {}
         model2.add_certificate(vault2['id'], certinfo)
         history = model2.get_version_history(vault2['id'], version2['id'])
         assert len(history) == 2

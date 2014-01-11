@@ -621,6 +621,7 @@ class SyncAPIApplication(WSGIApplication):
         for key in vault['keys']:
             certkeys[key] = { 'key': vault['keys'][key]['public'],
                               'keytype': vault['keys'][key]['keytype'] }
+        certinfo['restrictions'] = {}
         return certinfo
 
     @expose('/api/vaults/:vault/items', method='GET')

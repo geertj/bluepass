@@ -12,7 +12,7 @@ import itertools
 import socket
 import uuid
 
-from bluepass import base64, json, uuid4, logging
+from bluepass import base64, json, uuid4, logging, validate
 from bluepass.error import StructuredError
 from bluepass.crypto import CryptoProvider, CryptoError
 from bluepass import platform
@@ -27,6 +27,71 @@ __all__ = ('Model', 'ModelError')
 
 class ModelError(StructuredError):
     """Model error."""
+
+
+# Validators for our data model
+
+va_vault = validate.compile("""
+        { id: uuid, name: str@>0@<=100, node: uuid, keys:
+            { sign:
+                { keytype: str="rsa", private: b64@>=16, public: b64@>=16, encinfo:
+                    { algo: str="aes-cbc-pkcs7", iv: b64@>=16, kdf:str="pbkdf2-hmac-sha1",
+                      salt: b64@>=16, count: int>0, length: int>0 },
+                  pwcheck:
+                    { algo: str="hmac-random-sha256", random: b64@>=16, verifier: b64@>=16 } }
+              encrypt:
+                { keytype: str="rsa", private: b64@>=16, public: b64@>=16, encinfo:
+                    { algo: str="aes-cbc-pkcs7", iv: b64@>=16, kdf:str="pbkdf2-hmac-sha1",
+                      salt: b64@>=16, count: int>0, length: int>0 },
+                  pwcheck:
+                    { algo: str="hmac-random-sha256", random: b64@>=16, verifier: b64@>=16 } }
+              auth:
+                { keytype: str="rsa", private: b64@>=16, public: b64@>=16, encinfo:
+                    { algo: str="plain" } } } }
+        """)
+
+
+va_item = validate.compile("""
+        { id: uuid, _type: str="Item", vault: uuid,
+          origin: { node: uuid, seqnr: int>=0 },
+          payload: { _type: str="Certificate"|="EncryptedItem", ... }
+          signature: { algo: str="rsa-pss-sha256", blob: b64@>=16 } }
+        """)
+
+va_cert = validate.compile("""
+        { id: uuid, payload:
+            {  id: uuid, _type:str="Certificate", node: uuid, name: str@>0@<=100, keys:
+                { sign: { key: b64, keytype: str="rsa" },
+                  encrypt: { key: b64, keytype: str="rsa" },
+                  auth: { key: b64, keytype: str="rsa" } }
+               restrictions: { synconly: bool* } }, ... }
+        """)
+
+va_encitem = validate.compile("""
+        { id: uuid, payload:
+            { _type: str="EncryptedItem", algo: str="aes-cbc-pkcs7",
+              iv: b64@>=16 blob: b64@>=2, keyalgo: str="rsa-oaep", keys: dict }, ... }
+        """)
+
+# XXX: Check encitems/payload/keys: uuid -> b64
+
+va_decitem = validate.compile("""
+        { id: uuid, payload: { id: uuid, _type: str="Version", ... }, ... }
+        """)
+
+va_version = validate.compile("""
+        { id: uuid, payload:
+            { id: uuid, _type: str="Version", parent: uuid*, deleted: bool*,
+              created_at: int>=0, version: { id: uuid, ... } }, ... }
+        """)
+
+va_certinfo = validate.compile("""
+        { node: uuid, name: str@>0@<=100, keys:
+            { sign: { key: b64@>=16, keytype: str="rsa" },
+              encrypt: { key: b64@>=16, keytype: str="rsa" },
+              auth: { key: b64@>=16, keytype: str="rsa" } }
+          restrictions: { synconly: bool* } }
+        """)
 
 
 class Model(object):
@@ -64,175 +129,6 @@ class Model(object):
             db.create_index('items', '$origin$seqnr', 'INT', False)
             db.create_index('items', '$payload$_type', 'TEXT', False)
 
-    def check_vault(self, vault):
-        """Check a vault for consistency."""
-        try:
-            u = json.unpack(vault, '{s:s,s:s,s:s,s:' \
-                            '{s:{s:s,s:s,s:s,s:{s:s,s:s,s:s,s:s,s:u,s:u},' \
-                            '    s:{s:s,s:s,s:s}},'
-                            ' s:{s:s,s:s,s:s,s:{s:s,s:s,s:s,s:s,s:u,s:u},' \
-                            '    s:{s:s,s:s,s:s}},'
-                            ' s:{s:s,s:s,s:s,s:{s:s}}}}',
-                            ('id', 'name', 'node', 'keys',
-                             'sign', 'keytype', 'private', 'public', 'encinfo',
-                                'algo', 'iv', 'kdf', 'salt', 'count', 'length',
-                                'pwcheck', 'algo', 'random', 'verifier',
-                             'encrypt', 'keytype', 'private', 'public', 'encinfo',
-                                'algo', 'iv', 'kdf', 'salt', 'count', 'length',
-                                'pwcheck', 'algo', 'random', 'verifier',
-                             'auth', 'keytype', 'private', 'public', 'encinfo',
-                                'algo'))
-        except json.UnpackError as e:
-            return False, str(e)
-        if not uuid4.check(u[0]):
-            return False, 'Illegal UUID "%s"' % u[0]
-        if len(u[1]) == 0:
-            return False, 'Vault name cannot be empty'
-        elif len(u[1]) > 100:
-            return False, 'Vault name too long (max = 100 characters)'
-        if not uuid4.check(u[2]):
-            return False, 'Illegal node UUID "%s"' % u[2]
-        if u[3] != 'rsa':
-            return False, 'Unknown key type "%s" for sign key' % u[3]
-        if not base64.check(u[4]):
-            return False, 'Invalid base64 for private sign key'
-        if not base64.check(u[5]):
-            return False, 'Invalid base64 for public sign key'
-        if u[6] != 'aes-cbc-pkcs7':
-            return False, 'Unkown algo "%s" for sign key' % u[6]
-        if not base64.check(u[7]):
-            return False, 'Invalid base64 for encinfo/IV for sign key' % u[7]
-        if u[8] not in ('pbkdf2-hmac-sha1', 'pbkdf2-hmac-sha256'):
-            return False, 'Unknown encinfo/kdf "%s" for sign key' % u[8]
-        if not base64.check(u[9]):
-            return False, 'Invalid base64 for encinfo/salt for sign key' % u[9]
-        if u[12] != 'hmac-random-sha256':
-            return False, 'Unknown pwcheck/algo "%s" for sign key' % u[12]
-        if not base64.check(u[13]):
-            return False, 'Invalid base64 in pwcheck/random for sign key' % u[13]
-        if not base64.check(u[14]):
-            return False, 'Invalid base64 in pwcheck/verifier for sign key' % u[14]
-        if u[15] != 'rsa':
-            return False, 'Unknown key type "%s" for encrypt key' % u[15]
-        if not base64.check(u[16]):
-            return False, 'Invalid base64 for private encrypt key'
-        if not base64.check(u[17]):
-            return False, 'Invalid base64 for public encrypt key'
-        if u[18] != 'aes-cbc-pkcs7':
-            return False, 'Unkown algo "%s" for encrypt key' % u[18]
-        if not base64.check(u[19]):
-            return False, 'Invalid base64 for encinfo/IV for encrypt key' % u[19]
-        if u[20] not in ('pbkdf2-hmac-sha1', 'pbkdf2-hmac-sha256'):
-            return False, 'Unknown encinfo/kdf "%s" for encrypt key' % u[20]
-        if not base64.check(u[21]):
-            return False, 'Invalid base64 for encinfo/salt for encrypt key' % u[21]
-        if u[24] != 'hmac-random-sha256':
-            return False, 'Unknown pwcheck/algo "%s" for encrypt key' % u[24]
-        if not base64.check(u[25]):
-            return False, 'Invalid base64 in pwcheck/random for encrypt key' % u[25]
-        if not base64.check(u[26]):
-            return False, 'Invalid base64 in pwcheck/verifier for encrypt key' % u[26]
-        if u[27] != 'rsa':
-            return False, 'Unknown key type "%s" for auth key' % u[27]
-        if not base64.check(u[28]):
-            return False, 'Invalid base64 for private auth key'
-        if not base64.check(u[29]):
-            return False, 'Invalid base64 for public auth key'
-        if u[30] != 'plain':
-            return False, 'Unexpected algo "%s" for encrypt key' % u[30]
-        return True, 'All checks passed'
-
-    def check_item(self, item):
-        """Check the envelope of an item."""
-        try:
-            u = json.unpack(item, '{s:s,s:s,s:s,s:{s:s,s:u!},' \
-                            's:{s:s*},s:{s:s,s:s!}!}',
-                            ('id', '_type', 'vault', 'origin', 'node', 'seqnr',
-                             'payload', '_type', 'signature', 'algo', 'blob'))
-        except json.UnpackError as e:
-            return False, str(e)
-        if not uuid4.check(u[0]):
-            return False, 'Illegal UUID'
-        if u[1] != 'Item':
-            return False, 'Expecting type "Item" (got: "%s")' % u[1]
-        if not uuid4.check(u[2]):
-            return False, 'Illegal vault UUID'
-        if not uuid4.check(u[3]):
-            return False, 'Illegal origin node UUID'
-        if u[5] not in ('Certificate', 'EncryptedItem'):
-            return False, 'Unknown payload type "%s"' % u[5]
-        if u[6] != 'rsa-pss-sha256':
-            return False, 'Unkown signature algo "%s"' % u[6]
-        if not base64.check(u[7]):
-            return False, 'Illegal base64 for signature'
-        return True, 'All checks passed'
-
-    def check_certificate(self, item):
-        """Check the format of a certificiate.
-
-        NOTE: This only does format checks , no signatures are verified!
-        """
-        try:
-            u = json.unpack(item, '{s:s,s:{s:s,s:s,s:s,s:s,s:{s?:{s:s,s:s!},' \
-                            's?:{s:s,s:s!},s:{s:s,s:s!}!},s?:{s?:b!}!}}',
-                            ('id', 'payload', 'id', '_type', 'node', 'name',
-                             'keys', 'sign', 'key', 'keytype',
-                             'encrypt', 'key', 'keytype', 'auth', 'key',
-                             'keytype', 'restrictions', 'synconly'))
-        except json.UnpackError as e:
-            return False, str(e)
-        assert uuid4.check(u[0])
-        if not uuid4.check(u[1]):
-            return False, 'Invalid UUID'
-        if u[2] != 'Certificate':
-            return False, 'Expecting type "Certificate" (got: "%s")' % u[3]
-        if not uuid4.check(u[3]):
-            return False, 'Invalid node UUID'
-        if not u[4]:
-            return False, 'Name cannot be empty'
-        elif len(u[4]) > 100:
-            return False, 'Name too long (max = 100 characters)'
-        if not base64.check(u[5]):
-            return False, 'Invalid base64 for sign key'
-        if u[6] != 'rsa':
-            return False, 'Unknown key type "%s" for sign key' % u[6]
-        if not base64.check(u[7]):
-            return False, 'Invalid base64 for encrypt key'
-        if u[8] != 'rsa':
-            return False, 'Unkown key type "%s" for encrypt key' % u[8]
-        if not base64.check(u[9]):
-            return False, 'Invalid base64 for auth key'
-        if u[10] != 'rsa':
-            return False, 'Unkown key type "%s" for auth key' % u[10]
-        return True, 'All checks passed'
-
-    def check_encrypted_item(self, item):
-        """Check the format of an encrypted item."""
-        try:
-            u = json.unpack(item, '{s:s,s:{s:s,s:s,s:s,s:s,s:s,s:o!}}',
-                            ('id', 'payload', '_type', 'algo', 'iv',
-                             'blob', 'keyalgo', 'keys'))
-        except json.UnpackError as e:
-            return False, str(e)
-        assert uuid4.check(u[0])
-        assert u[1] == 'EncryptedItem'
-        if u[2] != 'aes-cbc-pkcs7':
-            return False, 'Unknown algo "%s"' % u[2]
-        if not base64.check(u[3]):
-            return False, 'Invalid base64 for IV'
-        if not base64.check(u[4]):
-            return False, 'Invalid base64 for blob'
-        if u[5] != 'rsa-oaep':
-            return False, 'Unknown keyalgo "%s"' % u[5]
-        if not isinstance(u[6], dict):
-            return False, 'Invalid keys dict'
-        for key,value in u[6].items():
-            if not uuid4.check(key):
-                return False, 'Illegal key UUID "%s" in keys dict' % key
-            if not base64.check(value):
-                return False, 'Invalid base64 for key "%s" in keys dict' % key
-        return True, 'All checks passed'
-
     def _check_items(self, vault):
         """Check all items in a vault."""
         total = errors = 0
@@ -240,22 +136,22 @@ class Model(object):
         self._log.debug('Checking all items in vault "{}"', vault)
         for item in items:
             uuid = item.get('id', '<no id>')
-            status, detail = self.check_item(item)
-            if not status:
-                self._log.error('Invalid item "{}": {}', uuid, detail)
+            vres = va_item.validate(item)
+            if not vres:
+                self._log.error('Invalid item "{}": {}', uuid, vres.errors[0])
                 errors += 1
                 continue
             typ = item['payload']['_type']
             if typ == 'Certificate':
-                status, detail = self.check_certificate(item)
-                if not status:
-                    self._log.error('Invalid certificate "{}": {}', uuid, detail)
+                vres = va_cert.validate(item)
+                if not vres:
+                    self._log.error('Invalid certificate "{}": {}', uuid, vres.errors[0])
                     errors += 1
                     continue
             elif typ == 'EncryptedItem':
-                status, detail = self.check_encrypted_item(item)
-                if not status:
-                    self._log.error('Invalid encrypted item "{}": {}', uuid, detail)
+                vres = va_encitem.validate(item)
+                if not vres:
+                    self._log.error('Invalid encrypted item "{}": {}', uuid, vres.errors[0])
                     errors += 1
                     continue
             else:
@@ -268,9 +164,9 @@ class Model(object):
     def _load_vault(self, vault):
         """Check and load a single vault."""
         uuid = vault.get('id', '<no id>')
-        status, detail = self.check_vault(vault)
-        if not status:
-            self._log.error('Vault "{}" has errors (skipping): {}', uuid, detail)
+        vres = va_vault.validate(vault)
+        if not vres:
+            self._log.error('Vault "{}" has errors (skipping): {}', uuid, vres.errors[0])
             return False
         uuid = vault['id']
         if not self._check_items(vault['id']):
@@ -310,7 +206,7 @@ class Model(object):
 
     def _verify_signature(self, item, pubkey):
         """Verify the signature on an item."""
-        assert self.check_item(item)[0]
+        assert va_item.match(item)
         signature = item.pop('signature')
         if signature['algo'] != 'rsa-pss-sha256':
             self._log.error('unknown signature algo "{}" for item "{}"', algo, item['id'])
@@ -361,7 +257,7 @@ class Model(object):
         query = "$vault = ? AND $payload$_type = 'Certificate'"
         result = self.database.findall('items', query, (vault,))
         for cert in result:
-            assert self.check_item(cert)[0]
+            assert va_item.match(cert)
             signer = cert['origin']['node']
             try:
                 certs[signer].append(cert)
@@ -389,38 +285,6 @@ class Model(object):
         ncerts = sum([len(certs) for certs in trusted_certs.items()])
         self._log.debug('there are {} trusted certs for vault "{}"', ncerts, vault)
         self._trusted_certs[vault] = trusted_certs
-
-    def check_decrypted_item(self, item):
-        """Check a decrypted item."""
-        try:
-            u = json.unpack(item, '{s:s,s:{s:s,s:s}}',
-                            ('id', 'payload', 'id', '_type'))
-        except json.UnpackError as e:
-            return False, str(e)
-        if not uuid4.check(u[1]):
-            return False, 'Invalid UUID "%s"' % u[1]
-        if u[2] != 'Version':
-            return False, 'Unknown type "%s"' % u[2]
-        return True, 'All checks passed'
-
-    def check_version(self, item):
-        """Check a decrypted item and ensure it is a valid version."""
-        try:
-            u = json.unpack(item, '{s:s,s:{s:s,s:s,s?:s,s?:b,s:u,s{s:s}}}',
-                            ('id', 'payload', 'id', '_type', 'parent', 'deleted',
-                             'created_at', 'version', 'id'))
-        except json.UnpackError as e:
-            return str(e)
-        assert uuid4.check(u[0])
-        if not uuid4.check(u[1]):
-            return False, 'Invalid version UUID "%s"' % u[1]
-        if u[2] != 'Version':
-            return False, 'Expecting type "Version" (got: "%s")' % u[2]
-        if u[3] and not uuid4.check(u[3]):
-            return False, 'Invalid parent UUID "%s"' % u[3]
-        if not uuid4.check(u[6]):
-            return False, 'Invalid version data UUID "%s"' % u[6]
-        return True, 'All checks passed'
 
     def _update_version_cache(self, items, notify=True, local=True):
         """Update the version cache for `items'. If `notify` is True,
@@ -515,8 +379,8 @@ class Model(object):
         for item in items:
             if not self._verify_item(vault, item) or \
                     not self._decrypt_item(vault, item) or \
-                    not self.check_decrypted_item(item)[0] or \
-                    not self.check_version(item)[0]:
+                    not va_decitem.match(item) or \
+                    not va_version.match(item):
                 continue
             versions.append(item)
         self._update_version_cache(versions, notify=False)
@@ -676,8 +540,7 @@ class Model(object):
         encinfo['algo'] = 'aes-cbc-pkcs7'
         iv = crypto.random(16)
         encinfo['iv'] = base64.encode(iv)
-        prf = 'hmac-sha256' if self.crypto.pbkdf2_prf_available('hmac-sha256') \
-                    else 'hmac-sha1'
+        prf = 'hmac-sha1'
         encinfo['kdf'] = 'pbkdf2-%s' % prf
         # Tune pbkdf2 so that it takes about 0.2 seconds (but always at
         # least 4096 iterations).
@@ -812,9 +675,10 @@ class Model(object):
 
     def update_vault(self, vault):
         """Update a vault."""
-        status, detail = self.check_vault(vault)
-        if not status:
-            raise ModelError('InvalidArgument', 'Invalid vault: %s' % detail)
+        errors = []
+        vres = va_vault.validate(vault)
+        if not vres:
+            raise ModelError('InvalidArgument', 'Invalid vault: %s' % vres.errors[0])
         self.database.update('vaults', '$id = ?', (vault['id'],), vault)
         self.raise_event('VaultUpdated', vault)
 
@@ -899,7 +763,7 @@ class Model(object):
             privkey = base64.decode(keyinfo['private'])
             encinfo = keyinfo['encinfo']
             pwcheck = keyinfo['pwcheck']
-            # These are enforced by check_vault()
+            # These are enforced by va_vault.match()
             assert encinfo['algo'] == 'aes-cbc-pkcs7'
             assert encinfo['kdf'] in ('pbkdf2-hmac-sha1', 'pbkdf2-hmac-sha256')
             assert pwcheck['algo'] == 'hmac-random-sha256'
@@ -1102,36 +966,6 @@ class Model(object):
         key = base64.decode(vault['keys']['auth']['private'])
         return key
 
-    def check_certinfo(self, certinfo):
-        """Check a certificate info structure."""
-        try:
-            u = json.unpack(certinfo, '{s:s,s:s,s:{s:{s:s,s:s!},' \
-                            's:{s:s,s:s!},s:{s:s,s:s!}!},s?:{s?:b!}!}',
-                            ('node', 'name', 'keys', 'sign', 'key', 'keytype',
-                             'encrypt', 'key', 'keytype', 'auth', 'key',
-                             'keytype', 'restrictions', 'synconly'))
-        except json.UnpackError as e:
-            return False, str(e)
-        if not uuid4.check(u[0]):
-            return False, 'Illegal node UUID'
-        if not u[1]:
-            return False, 'Name must be > 0 characters'
-        if len(u[1]) > 100:
-            return False, 'Name too long (max = 100 characters)'
-        if not base64.check(u[2]):
-            return False, 'Illegal base64 in sign key'
-        if u[3] != 'rsa':
-            return False, 'Unknown sign key type: %s' % u[3]
-        if not base64.check(u[4]):
-            return False, 'Illegal base64 in encrypt key'
-        if u[5] != 'rsa':
-            return False, 'Unknown encrypt key type: %s' % u[5]
-        if not base64.check(u[6]):
-            return False, 'Illegal base64 in auth key'
-        if u[7] != 'rsa':
-            return False, 'Unknown auth key type: %s' % u[5]
-        return True, 'All checks passed'
-
     def add_certificate(self, vault, certinfo):
         """Add a certificate to a vault.
 
@@ -1149,9 +983,9 @@ class Model(object):
             raise ModelError('NotFound', 'Vault not found')
         if self.vault_is_locked(vault):
             raise ModelError('Locked', 'Vault is locked')
-        status, detail = self.check_certinfo(certinfo)
-        if not status:
-            raise ModelError('InvalidArgument', detail)
+        vres = va_certinfo.validate(certinfo)
+        if not vres:
+            raise ModelError('InvalidArgument', vres.errors[0])
         item = self._new_certificate(vault, **certinfo)
         self._add_origin(vault, item)
         self._sign_item(vault, item)
@@ -1214,13 +1048,13 @@ class Model(object):
         """Import a single item."""
         if not uuid4.check(vault):
             raise ModelError('InvalidArgument', 'Illegal vault UUID')
-        status, detail = self.check_item(item)
-        if not status:
-            raise ModelError('InvalidArgument', 'Invalid item: %s' % detail)
+        vres = va_item.validate(item)
+        if not vres:
+            raise ModelError('InvalidArgument', 'Invalid item: %s' % vres.errors[0])
         if item['payload']['_type'] == 'Certificate':
-            status, detail = self.check_certificate(item)
-            if not status:
-                raise ModelError('InvalidArgument', 'Invalid cert: %s' % detail)
+            vres = va_cert.validate(item)
+            if not vres:
+                raise ModelError('InvalidArgument', 'Invalid cert: %s' % vres.errors[0])
             self.database.insert('items', item)
             self._log.debug('imported certificate, re-calculating trust')
             self._calculate_trust(item['vault'])
@@ -1230,10 +1064,10 @@ class Model(object):
             args = (vault, item['payload']['node'])
             items = self.database.findall('items', query, args)
         elif item['payload']['_type'] == 'EncryptedItem':
-            status, detail = self.check_encrypted_item(item)
-            if not status:
+            vres = va_encitem.validate(item)
+            if not vres:
                 raise ModelError('InvalidArgument',
-                                 'Invalid encrypted item: %s' % detail)
+                                 'Invalid encrypted item: %s' % vres.errors[0])
             self.database.insert('items', item)
             items = [item]
         else:
@@ -1245,8 +1079,8 @@ class Model(object):
         for item in items:
             if not self._verify_item(vault, item) or \
                     not self._decrypt_item(vault, item) or \
-                    not self.check_decrypted_item(item)[0] or \
-                    not self.check_version(item)[0]:
+                    not va_decitem.match(item) or \
+                    not va_version.match(item):
                 continue
             versions.append(item)
         self._log.debug('updating version cache for {} versions', len(versions))
@@ -1261,7 +1095,7 @@ class Model(object):
         if vault not in self.vaults:
             raise ModelError('NotFound')
         self._log.debug('importing {} items', len(items))
-        items = [ item for item in items if self.check_item(item)[0] ]
+        items = [ item for item in items if va_item.match(item) ]
         self._log.debug('{} items are well formed', len(items))
         # Weed out items we already have.
         vector = dict(self.get_vector(vault))
@@ -1273,7 +1107,7 @@ class Model(object):
         # trust before adding the other items.
         certs = [ item for item in items
                   if item['payload']['_type'] == 'Certificate'
-                        and self.check_certificate(item)[0] ]
+                        and va_cert.match(item) ]
         if certs:
             # It is safe to import any certificate. Certificates require
             # a trusted signature before they are considered trusted.
@@ -1294,7 +1128,7 @@ class Model(object):
         # certificates and add them
         encitems = [ item for item in items
                      if item['payload']['_type'] == 'EncryptedItem'
-                            and self.check_encrypted_item(item)[0] ]
+                            and va_encitem.match(item) ]
         self.database.insert_many('items', encitems)
         self._log.debug('imported {} encrypted items', len(encitems))
         # Update version and history caches (if the vault is unlocked)
@@ -1303,8 +1137,8 @@ class Model(object):
             for item in itertools.chain(encitems, certitems):
                 if not self._verify_item(vault, item) or \
                         not self._decrypt_item(vault, item) or \
-                        not self.check_decrypted_item(item)[0] or \
-                        not self.check_version(item)[0]:
+                        not va_decitem.match(item) or \
+                        not va_version.match(item):
                     continue
                 versions.append(item)
             self._update_version_cache(versions, notify=notify)

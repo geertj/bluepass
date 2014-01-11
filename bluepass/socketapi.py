@@ -439,6 +439,7 @@ class SocketAPIHandler(JsonRpcHandler):
         for key in vault['keys']:
             keys[key] = { 'key': vault['keys'][key]['public'],
                           'keytype': vault['keys'][key]['keytype'] }
+        certinfo['restrictions'] = {}
         client = SyncAPIClient()
         client.connect(addr)
         try:

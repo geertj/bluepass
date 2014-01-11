@@ -35,7 +35,10 @@ def decode(s):
     """Decode a base-64 encoded string."""
     if not isinstance(s, compat.string_types):
         raise TypeError('expecting string')
-    return base64.b64decode(s)
+    try:
+        return base64.b64decode(s)
+    except binascii.Error as e:
+        raise ValueError(str(e))
 
 def check(s):
     """Check that `s' is a properly encoded base64 string."""
