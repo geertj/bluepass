@@ -497,6 +497,7 @@ class SocketAPIServer(JsonRpcServer):
                         (jsonrpc_type(message), message.get('jsonrpc', '1.0')))
         self._tracefile.write(json.dumps_pretty(message))
         self._tracefile.write('\n\n')
+        self._tracefile.flush()
 
     def _log_response(self, message):
         if not self._tracefile:
@@ -505,3 +506,4 @@ class SocketAPIServer(JsonRpcServer):
                         (jsonrpc_type(message), message.get('jsonrpc', '1.0')))
         self._tracefile.write(json.dumps_pretty(message))
         self._tracefile.write('\n\n')
+        self._tracefile.flush()
