@@ -1,5 +1,5 @@
 #
-# This file is part of Bluepass. Bluepass is Copyright (c) 2012-2013
+# This file is part of Bluepass. Bluepass is Copyright (c) 2012-2014
 # Geert Jansen.
 #
 # Bluepass is free software available under the GNU General Public License,
@@ -196,7 +196,7 @@ class QJsonRpcClient(QObject):
         def method_response(message, client):
             replies.append(message)
         def method_timeout():
-            reply = jsonrpc.create_error(message, jsonrpc.errno.SERVER_ERROR,
+            reply = jsonrpc.create_error(message, jsonrpc.SERVER_ERROR,
                                         'Method call timed out')
             replies.append(reply)
         timeout = kwargs.pop('timeout', self.timeout)
@@ -293,7 +293,7 @@ class QJsonRpcHandler(object):
             if not is_request:
                 continue
             if exc:
-                response = jsonrpc.create_error(message, jsonrpc.errno.INTERNAL_ERROR)
+                response = jsonrpc.create_error(message, jsonrpc.INTERNAL_ERROR)
             elif self.send_response:
                 response = jsonrpc.create_response(message, result)
             else:
@@ -302,5 +302,5 @@ class QJsonRpcHandler(object):
                 client.send_message(response)
             break
         if is_request and handlers_found == 0:
-            error = jsonrpc.create_error(message, jsonrpc.errno.METHOD_NOT_FOUND)
+            error = jsonrpc.create_error(message, jsonrpc.METHOD_NOT_FOUND)
             client.send_message(error)
