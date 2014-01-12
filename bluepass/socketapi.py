@@ -8,10 +8,9 @@
 
 import binascii
 
-from bluepass import _version, util, json
+from bluepass import _version, util, json, crypto
 from bluepass.factory import instance
 from bluepass.error import StructuredError
-from bluepass.crypto import CryptoProvider
 from bluepass.model import Model
 from bluepass.passwords import PasswordGenerator
 from bluepass.locator import Locator
@@ -92,7 +91,6 @@ class SocketAPIHandler(JsonRpcHandler):
 
     def __init__(self):
         super(SocketAPIHandler, self).__init__()
-        self.crypto = instance(CryptoProvider)
         self.pairdata = {}
 
     @method()
@@ -151,7 +149,7 @@ class SocketAPIHandler(JsonRpcHandler):
         model = instance(Model)
         if not async:
             return model.create_vault(name, password)
-        uuid = self.crypto.randuuid()
+        uuid = crypto.random_uuid()
         self.send_response(uuid)
         try:
             vault = model.create_vault(name, password, uuid)
@@ -387,7 +385,7 @@ class SocketAPIHandler(JsonRpcHandler):
         if model.get_vault(vault):
             raise PairingError('Exists', 'Vault already exists')
         # Don't keep the GUI blocked while we wait for remote approval.
-        cookie = binascii.hexlify(self.crypto.random(16)).decode('ascii')
+        cookie = crypto.random_token(128)
         self.send_response(cookie)
         name = util.gethostname()
         for addr in neighbor['addresses']:

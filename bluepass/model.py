@@ -12,9 +12,8 @@ import itertools
 import socket
 import uuid
 
-from bluepass import base64, json, uuid4, logging, validate
+from bluepass import base64, json, uuid4, logging, validate, crypto
 from bluepass.error import StructuredError
-from bluepass.crypto import CryptoProvider, CryptoError
 from bluepass import platform
 
 import hashlib
@@ -100,7 +99,6 @@ class Model(object):
     def __init__(self, database):
         """Create a new model on top of `database`."""
         self.database = database
-        self.crypto = CryptoProvider()
         self.vaults = {}
         self._log = logging.get_logger(self)
         self._next_seqnr = {}
@@ -214,8 +212,8 @@ class Model(object):
         message = json.dumps_c14n(item).encode('utf8')
         blob = base64.decode(signature['blob'])
         try:
-            status = self.crypto.rsa_verify(message, blob, pubkey, 'pss-sha256')
-        except CryptoError:
+            status = crypto.rsa_verify(message, blob, pubkey, 'pss-sha256')
+        except crypto.Error:
             log.error('garbage in signature for item "%s"', item['id'])
             return False
         if not status:
@@ -399,7 +397,7 @@ class Model(object):
         signature['algo'] = 'rsa-pss-sha256'
         message = json.dumps_c14n(item).encode('utf8')
         signkey = self._private_keys[vault][0]
-        blob = self.crypto.rsa_sign(message, signkey, padding='pss-sha256')
+        blob = crypto.rsa_sign(message, signkey, 'pss-sha256')
         signature['blob'] = base64.encode(blob)
         item['signature'] = signature
 
@@ -422,16 +420,15 @@ class Model(object):
         """INTERNAL: Encrypt an item."""
         assert vault in self.vaults
         assert vault in self._private_keys
-        crypto = self.crypto
         clear = item.pop('payload')
         item['payload'] = payload = {}
         payload['_type'] = 'EncryptedItem'
         payload['algo'] = 'aes-cbc-pkcs7'
-        iv = crypto.random(16)
+        iv = crypto.random_bytes(16)
         payload['iv'] = base64.encode(iv)
-        symkey = crypto.random(16)
+        symkey = crypto.random_bytes(16)
         message = json.dumps(clear).encode('utf8')
-        blob = crypto.aes_encrypt(message, symkey, iv, mode='cbc-pkcs7')
+        blob = crypto.aes_encrypt(message, symkey, iv, 'cbc-pkcs7')
         payload['blob'] = base64.encode(blob)
         payload['keyalgo'] = 'rsa-oaep'
         payload['keys'] = keys = {}
@@ -443,14 +440,13 @@ class Model(object):
                 # do not encrypt items to "synconly" nodes
                 continue
             pubkey = base64.decode(cert['keys']['encrypt']['key'])
-            enckey = crypto.rsa_encrypt(symkey, pubkey, padding='oaep')
+            enckey = crypto.rsa_encrypt(symkey, pubkey, 'oaep')
             keys[node] = base64.encode(enckey)
 
     def _decrypt_item(self, vault, item):
         """INTERNAL: decrypt an encrypted item."""
         assert vault in self.vaults
         assert vault in self._private_keys
-        crypto = self.crypto
         algo = item['payload']['algo']
         keyalgo = item['payload']['keyalgo']
         if algo != 'aes-cbc-pkcs7':
@@ -467,11 +463,11 @@ class Model(object):
         try:
             enckey = base64.decode(keys[node])
             privkey = self._private_keys[vault][1]
-            symkey = crypto.rsa_decrypt(enckey, privkey, padding='oaep')
+            symkey = crypto.rsa_decrypt(enckey, privkey, 'oaep')
             blob = base64.decode(item['payload']['blob'])
             iv = base64.decode(item['payload']['iv'])
-            clear = crypto.aes_decrypt(blob, symkey, iv, mode='cbc-pkcs7')
-        except CryptoError as e:
+            clear = crypto.aes_decrypt(blob, symkey, iv, 'cbc-pkcs7')
+        except crypto.Error as e:
             self._log.error('could not decrypt encrypted payload in item {}: {}' % (item['id'], str(e)))
             return False
         payload = json.try_loads(clear.decode('utf8'))
@@ -491,7 +487,7 @@ class Model(object):
     def _new_item(self, vault, ptype, **kwargs):
         """Create a new empty item."""
         item = {}
-        item['id'] = self.crypto.randuuid()
+        item['id'] = crypto.random_uuid()
         item['_type'] = 'Item'
         item['vault'] = vault
         item['payload'] = payload = {}
@@ -502,14 +498,14 @@ class Model(object):
     def _new_certificate(self, vault, **kwargs):
         """Create anew certificate."""
         item = self._new_item(vault, 'Certificate', **kwargs)
-        item['payload']['id'] = self.crypto.randuuid()
+        item['payload']['id'] = crypto.random_uuid()
         return item
 
     def _new_version(self, vault, parent=None, **version):
         """Create a new empty version."""
         item = self._new_item(vault, 'Version')
         payload = item['payload']
-        payload['id'] = self.crypto.randuuid()
+        payload['id'] = crypto.random_uuid()
         payload['created_at'] = int(time.time())
         if parent is not None:
             payload['parent'] = parent
@@ -527,7 +523,6 @@ class Model(object):
     def _create_vault_key(self, password):
         """Create a new vault key. Return a tuple (private, public,
         keyinfo). The keyinfo structure contains the encrypted keys."""
-        crypto = self.crypto
         keyinfo = {}
         private, public = crypto.rsa_genkey(3072)
         keyinfo['keytype'] = 'rsa'
@@ -538,7 +533,7 @@ class Model(object):
             keyinfo['private'] = base64.encode(private)
             return private, public, keyinfo
         encinfo['algo'] = 'aes-cbc-pkcs7'
-        iv = crypto.random(16)
+        iv = crypto.random_bytes(16)
         encinfo['iv'] = base64.encode(iv)
         prf = 'hmac-sha1'
         encinfo['kdf'] = 'pbkdf2-%s' % prf
@@ -548,15 +543,14 @@ class Model(object):
         self._log.debug('using {} iterations for PBKDF2', count)
         encinfo['count'] = count
         encinfo['length'] = 16
-        salt = crypto.random(16)
+        salt = crypto.random_bytes(16)
         encinfo['salt'] = base64.encode(salt)
-        symkey = crypto.pbkdf2(password, salt, encinfo['count'],
-                               encinfo['length'], prf=prf)
-        enckey = crypto.aes_encrypt(private, symkey, iv, mode='cbc-pkcs7')
+        symkey = crypto.pbkdf2(password, salt, encinfo['count'], encinfo['length'], prf)
+        enckey = crypto.aes_encrypt(private, symkey, iv, 'cbc-pkcs7')
         keyinfo['private'] = base64.encode(enckey)
         keyinfo['pwcheck'] = pwcheck = {}
         pwcheck['algo'] = 'hmac-random-sha256'
-        random = crypto.random(16)
+        random = crypto.random_bytes(16)
         pwcheck['random'] = base64.encode(random)
         verifier = crypto.hmac(symkey, random, 'sha256')
         pwcheck['verifier'] = base64.encode(verifier)
@@ -565,9 +559,7 @@ class Model(object):
     def _create_vault_keys(self, password):
         """Create all 3 vault keys (sign, encrypt and auth)."""
         # Generate keys in the CPU thread pool.
-        prf = 'hmac-sha256' if self.crypto.pbkdf2_prf_available('hmac-sha256') \
-                    else 'hmac-sha1'
-        dummy = self.crypto.pbkdf2_speed(prf)
+        dummy = crypto.pbkdf2_speed('hmac-sha1')
         pool = gruvi.ThreadPool.get_cpu_pool()
         fsign = pool.submit(self._create_vault_key, password)
         fencrypt = pool.submit(self._create_vault_key, password)
@@ -597,7 +589,7 @@ class Model(object):
         """Return the configuration document."""
         config = self.database.findone('config')
         if config is None:
-            config = { 'id': self.crypto.randuuid() }
+            config = { 'id': crypto.random_uuid() }
             self.database.insert('config', config)
         return config
 
@@ -633,11 +625,11 @@ class Model(object):
             password = password.encode('utf8')
         vault = {}
         if uuid is None:
-            uuid = self.crypto.randuuid()
+            uuid = crypto.random_uuid()
         vault['id'] = uuid
         vault['_type'] = 'Vault'
         vault['name'] = name
-        vault['node'] = self.crypto.randuuid()
+        vault['node'] = crypto.random_uuid()
         keys = self._create_vault_keys(password)
         vault['keys'] = dict(((key, keys[key][2]) for key in keys))
         self.database.insert('vaults', vault)
@@ -756,7 +748,6 @@ class Model(object):
             return
         if isinstance(password, compat.text_type):
             password = password.encode('utf8')
-        crypto = self.crypto
         for key in ('sign', 'encrypt'):
             keyinfo = self.vaults[uuid]['keys'][key]
             pubkey = base64.decode(keyinfo['public'])
@@ -765,13 +756,12 @@ class Model(object):
             pwcheck = keyinfo['pwcheck']
             # These are enforced by va_vault.match()
             assert encinfo['algo'] == 'aes-cbc-pkcs7'
-            assert encinfo['kdf'] in ('pbkdf2-hmac-sha1', 'pbkdf2-hmac-sha256')
+            assert encinfo['kdf'] == 'pbkdf2-hmac-sha1'
             assert pwcheck['algo'] == 'hmac-random-sha256'
             salt = base64.decode(encinfo['salt'])
             iv = base64.decode(encinfo['iv'])
             prf = encinfo['kdf'][7:]
-            symkey = crypto.pbkdf2(password, salt, encinfo['count'],
-                                   encinfo['length'], prf=prf)
+            symkey = crypto.pbkdf2(password, salt, encinfo['count'], encinfo['length'], prf)
             random = base64.decode(pwcheck['random'])
             verifier = base64.decode(pwcheck['verifier'])
             check = crypto.hmac(symkey, random, 'sha256')
@@ -850,7 +840,7 @@ class Model(object):
             raise ModelError('NotFound', 'No such vault')
         if vault not in self._private_keys:
             raise ModelError('Locked', 'Vault is locked')
-        version['id'] = self.crypto.randuuid()
+        version['id'] = crypto.random_uuid()
         item = self._new_version(vault, **version)
         self._encrypt_item(vault, item)
         self._add_origin(vault, item)

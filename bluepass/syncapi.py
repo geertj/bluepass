@@ -23,36 +23,16 @@ except ImportError:
     from urllib.parse import parse_qs
 
 import gruvi
-from gruvi import Fiber, compat
+from gruvi import Fiber, compat, util
 from gruvi.http import HttpServer, HttpClient
 
-from bluepass import _version, json, base64, uuid4, util, logging
+from bluepass import _version, json, base64, uuid4, util, logging, crypto
 from bluepass.error import StructuredError
 from bluepass.factory import instance, singleton
-from bluepass.crypto import CryptoProvider, CryptoError, dhparams
 from bluepass.model import Model
 from bluepass.locator import Locator
 
 __all__ = ('SyncAPIError', 'SyncAPIClient', 'SyncAPIApplication', 'SyncAPIServer')
-
-
-def init_syncapi_ssl(pemdir):
-    """Perform once-off SSL initialization for the syncapi."""
-    init_pem_directory(pemdir)
-    SyncAPIClient.pem_directory = pemdir
-    SyncAPIServer.pem_directory = pemdir
-    from bluepass.ssl import patch_ssl_wrap_socket
-    patch_ssl_wrap_socket()
-
-def init_pem_directory(pemdir):
-    fname = os.path.join(pemdir, 'dhparams.pem')
-    st = util.try_stat(fname)
-    if st is not None:
-        return
-    with open(fname, 'w') as fout:
-        fout.write('-----BEGIN DH PARAMETERS-----\n')
-        fout.write(dhparams['skip2048'])
-        fout.write('-----END DH PARAMETERS-----\n')
 
 
 class SyncAPIError(StructuredError):
@@ -137,17 +117,11 @@ class SyncAPIClient(object):
     and synchronization (sync()).
     """
 
-    pem_directory = None
-
     def __init__(self):
         """Create a new client for the syncapi API at `address`."""
         self.address = None
         self.connection = None
         self._log = logging.get_logger(self)
-        self.crypto = CryptoProvider()
-        if self.pem_directory is None and compat.PY3:
-            self.pem_directory = tempfile.mkdtemp()
-            init_pem_directory(self.pem_directory)
 
     def _make_request(self, method, url, headers=None, body=None):
         """Make an HTTP request to the API.
@@ -186,14 +160,14 @@ class SyncAPIClient(object):
 
     def connect(self, address):
         """Connect to the remote syncapi."""
+        dhparams = util.asset('pem', 'dhparams.pem')
         if compat.PY3:
             context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
             context.set_ciphers('ADH+AES')
-            context.load_dh_params(os.path.join(self.pem_directory, 'dhparams.pem'))
+            context.load_dh_params(dhparams)
             sslargs = {'context': context}
         else:
-            sslargs = {'dhparams': base64.decode(dhparams['skip2048']),
-                       'ciphers': 'ADH+AES'}
+            sslargs = {'ciphers': 'ADH+AES', 'dh_params': dhparams}
         connection = HttpClient()
         try:
             connection.connect(address, ssl=True, **sslargs)
@@ -215,7 +189,7 @@ class SyncAPIClient(object):
     def _get_hmac_cb_auth(self, kxid, pin):
         """Return the headers for a client to server HMAC_CB auth."""
         cb = self.connection.transport.ssl.get_channel_binding('tls-unique')
-        signature = self.crypto.hmac(adjust_pin(pin, +1).encode('ascii'), cb, 'sha1')
+        signature = crypto.hmac(adjust_pin(pin, +1).encode('ascii'), cb, 'sha1')
         signature = base64.encode(signature)
         auth = create_option_header('HMAC_CB', kxid=kxid, signature=signature)
         headers = [('Authorization', auth)]
@@ -234,7 +208,7 @@ class SyncAPIClient(object):
             return False
         signature = base64.decode(options['signature'])
         cb = self.connection.transport.ssl.get_channel_binding('tls-unique')
-        check = self.crypto.hmac(adjust_pin(pin, -1).encode('ascii'), cb, 'sha1')
+        check = crypto.hmac(adjust_pin(pin, -1).encode('ascii'), cb, 'sha1')
         if check != signature:
             self._log.error('HMAC_CB signature did not match')
             return False
@@ -255,7 +229,7 @@ class SyncAPIClient(object):
             raise SyncAPIError('RemoteError', 'Could not make HTTP request')
         status = response.status
         if status != 401:
-            self_log.error('expecting HTTP status 401 (got: {})', status)
+            self._log.error('expecting HTTP status 401 (got: {})', status)
             raise SyncAPIError('RemoteError', 'HTTP {0}'.format(response.status))
         wwwauth = response.get_header('WWW-Authenticate', '')
         try:
@@ -296,7 +270,7 @@ class SyncAPIClient(object):
         cb = self.connection.transport.ssl.get_channel_binding('tls-unique')
         privkey = model.get_auth_key(uuid)
         assert privkey is not None
-        signature = self.crypto.rsa_sign(cb, privkey, 'pss-sha1')
+        signature = crypto.rsa_sign(cb, privkey, 'pss-sha1')
         signature = base64.encode(signature)
         vault = model.get_vault(uuid)
         auth = create_option_header('RSA_CB', node=vault['node'], signature=signature)
@@ -320,12 +294,12 @@ class SyncAPIClient(object):
         signature = base64.decode(options['signature'])
         cert = model.get_certificate(uuid, options['node'])
         if cert is None:
-            self_log.error('unknown node {} in RSA_CB authentication', node)
+            self._log.error('unknown node {} in RSA_CB authentication', node)
             return False
         pubkey = base64.decode(cert['payload']['keys']['auth']['key'])
         try:
-            status = self.crypto.rsa_verify(cb, signature, pubkey, 'pss-sha1')
-        except CryptoError:
+            status = crypto.rsa_verify(cb, signature, pubkey, 'pss-sha1')
+        except crypto.Error:
             self._log.error('corrupt RSA_CB signature')
             return False
         if not status:
@@ -500,7 +474,6 @@ class SyncAPIApplication(WSGIApplication):
 
     def __init__(self):
         super(SyncAPIApplication, self).__init__()
-        self.crypto = CryptoProvider()
         self.allow_pairing = False
         self.key_exchanges = {}
 
@@ -524,8 +497,8 @@ class SyncAPIApplication(WSGIApplication):
                 raise HTTPReturn('403 Pairing Disabled')
             from bluepass.socketapi import SocketAPIServer
             bus = instance(SocketAPIServer)
-            kxid = binascii.hexlify(self.crypto.random(16)).decode('ascii')
-            pin = '%06d' % (self.crypto.randint(bits=31) % 1000000)
+            kxid = crypto.random_token(128)
+            pin = '{0:06d}'.format(crypto.random_int(1000000))
             for client in bus.clients:
                 approved = bus.call_method(client, 'get_pairing_approval',
                                            name, uuid, pin, kxid)
@@ -550,7 +523,7 @@ class SyncAPIApplication(WSGIApplication):
             if now - starttime > 60:
                 raise HTTPReturn('403 Request Timeout')
             cb = self.environ['SSL_CHANNEL_BINDING_TLS_UNIQUE']
-            check = self.crypto.hmac(adjust_pin(pin, +1).encode('ascii'), cb, 'sha1')
+            check = crypto.hmac(adjust_pin(pin, +1).encode('ascii'), cb, 'sha1')
             if check != signature:
                 raise HTTPReturn('403 Invalid PIN')
             from bluepass.socketapi import SocketAPIServer
@@ -558,7 +531,7 @@ class SyncAPIApplication(WSGIApplication):
             for client in bus.clients:
                 bus.send_notification(client, 'PairingComplete', kxid)
             # Prove to the other side we also know the PIN
-            signature = self.crypto.hmac(adjust_pin(pin, -1).encode('ascii'), cb, 'sha1')
+            signature = crypto.hmac(adjust_pin(pin, -1).encode('ascii'), cb, 'sha1')
             signature = base64.encode(signature)
             authinfo = create_option_header('HMAC_CB', kxid=kxid, signature=signature)
             self.headers.append(('Authentication-Info', authinfo))
@@ -589,13 +562,13 @@ class SyncAPIApplication(WSGIApplication):
         signature = base64.decode(opts['signature'])
         pubkey = base64.decode(cert['payload']['keys']['auth']['key'])
         cb = self.environ['SSL_CHANNEL_BINDING_TLS_UNIQUE']
-        if not self.crypto.rsa_verify(cb, signature, pubkey, 'pss-sha1'):
+        if not crypto.rsa_verify(cb, signature, pubkey, 'pss-sha1'):
             raise HTTPReturn(http.UNAUTHORIZED, headers)
         # The peer was authenticated. Authenticate ourselves as well.
         privkey = model.get_auth_key(uuid)
         vault = model.get_vault(uuid)
         node = vault['node']
-        signature = self.crypto.rsa_sign(cb, privkey, 'pss-sha1')
+        signature = crypto.rsa_sign(cb, privkey, 'pss-sha1')
         signature = base64.encode(signature)
         auth = create_option_header('RSA_CB', node=node, signature=signature)
         self.headers.append(('Authentication-Info', auth))
@@ -665,14 +638,9 @@ class SyncAPIApplication(WSGIApplication):
 class SyncAPIServer(HttpServer):
     """The WSGI server that runs the syncapi."""
 
-    pem_directory = None
-
     def __init__(self):
         handler = singleton(SyncAPIApplication)
         super(SyncAPIServer, self).__init__(handler)
-        if self.pem_directory is None and compat.PY3:
-            self.pem_directory = tempfile.mkdtemp()
-            init_pem_directory(self.pem_directory)
 
     def _get_environ(self, transport, message):
         env = super(SyncAPIServer, self)._get_environ(transport, message)
@@ -682,14 +650,14 @@ class SyncAPIServer(HttpServer):
         return env
 
     def listen(self, address):
+        dhparams = util.asset('pem', 'dhparams.pem')
         if compat.PY3:
             context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
             context.set_ciphers('ADH+AES')
-            context.load_dh_params(os.path.join(self.pem_directory, 'dhparams.pem'))
+            context.load_dh_params(dhparams)
             sslargs = {'context': context}
         else:
-            sslargs = {'dhparams': base64.decode(dhparams['skip2048']),
-                       'ciphers': 'ADH+AES'}
+            sslargs = {'ciphers': 'ADH+AES', 'dh_params': dhparams}
         super(SyncAPIServer, self).listen(address, ssl=True, **sslargs)
 
 

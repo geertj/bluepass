@@ -3,3 +3,4 @@
 pycparser
 cffi
 -e git://github.com/geertj/gruvi.git#egg=gruvi
+six

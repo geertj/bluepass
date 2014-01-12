@@ -1,5 +1,5 @@
 #
-# This file is part of Bluepass. Bluepass is Copyright (c) 2012-2013
+# This file is part of Bluepass. Bluepass is Copyright (c) 2012-2014
 # Geert Jansen.
 #
 # Bluepass is free software available under the GNU General Public License,
@@ -9,47 +9,42 @@
 from __future__ import absolute_import, print_function
 
 import ssl
-import socket
-
 from bluepass.ext import _sslex
 
 
 class SSLSocket(ssl.SSLSocket):
-    """An extended version of SSLSocket.
+    """An SSLSocket that backports a few features from Python 3.x that we
+    depend on:
     
-    This backports two features from Python 3.x to 2.x that we depend on:
-
-    * Retrieving the channel bindings (get_channel_bindings()).
-    * Setting the Diffie-Hellman group parameters (via the "dhparams"
-       and dh_single_use keyword arguments to the constructor).
+     * Setting the ciphers (missing on 2.6 only).
+     * Retrieving the channel bindings.
+     * Setting the Diffie-Hellman group parameters.
 
     This whole thing is a horrible hack. Luckly we don't need it on Python 3.
     """
 
     def __init__(self, *args, **kwargs):
         """Constructor."""
+        self._sslex_ciphers = kwargs.pop('ciphers', None)
+        self._sslex_dh_params = kwargs.pop('dh_params', None)
         # Below an even more disgusting hack.. Python's _ssl.sslwrap() requires
         # keyfile and certfile to be set for server sockets. However in case we
         # use anonymous Diffie-Hellman, we don't need these. The "solution" is
         # to force the socket to be a client socket for the purpose of the
         # constructor, and then later patch it to be a server socket
-        # (_sslex._set_accept_state()). Fortunately this is solved in Python
-        # 3.x.
-        self._sslex_dhparams = kwargs.pop('dhparams', '')
-        self._sslex_dh_single_use = kwargs.pop('dh_single_use', False)
+        # (_sslex._set_accept_state()). Fortunately this is solved in Python 3.
         self._sslex_server_side = kwargs.pop('server_side', False)
-        self._sslex_ciphers = kwargs.pop('ciphers', None)
         super(SSLSocket, self).__init__(*args, **kwargs)
 
     def do_handshake(self):
-        """Set DH parameters prior to handshake."""
-        if self._sslex_dhparams:
-            _sslex.set_dh_params(self._sslobj, self._sslex_dhparams,
-                                 self._sslex_dh_single_use)
-            self._sslex_dhparms = None
+        # Our low-level hacks work on _sslobj which is available only when
+        # connected. So implement our hacks in do_handshake().
         if self._sslex_ciphers:
             _sslex.set_ciphers(self._sslobj, self._sslex_ciphers)
             self._sslex_ciphers = None
+        if self._sslex_dh_params:
+            _sslex.load_dh_params(self._sslobj, self._sslex_dh_params)
+            self._sslex_dh_params = None
         # Now make it a server socket again if we need to..
         if self._sslex_server_side:
             _sslex._set_accept_state(self._sslobj)
@@ -67,9 +62,6 @@ class SSLSocket(ssl.SSLSocket):
 
 def patch_ssl_wrap_socket():
     """Monkey patch ssl.wrap_socket to use our extended SSL socket."""
-    from gruvi import compat
-    if compat.PY3:
-        return
     import ssl
     def wrap_socket(sock, **kwargs):
         return SSLSocket(sock, **kwargs)

@@ -7,13 +7,9 @@
 # licensing terms.
 
 import math
-import os.path
+from bluepass import util, crypto
 
-from bluepass import util
-from bluepass.crypto import CryptoProvider
-from bluepass.factory import instance
-
-__all__ = ('PasswordGenerator',)
+__all__ = ['PasswordGenerator']
 
 
 class PasswordGenerator(object):
@@ -41,7 +37,6 @@ class PasswordGenerator(object):
 
     def __init__(self):
         """Create a new PasswordGenerator."""
-        self.crypto = instance(CryptoProvider)
         self._load_wordlist()
 
     def _expand_alphabet(self, alphabet):
@@ -103,8 +98,8 @@ class PasswordGenerator(object):
         """
         if alphabet:
             alphabet = self._expand_alphabet(alphabet)
-        password = self.crypto.random(size, alphabet)
-        return password
+        characters = [crypto.random_element(alphabet) for i in range(size)]
+        return ''.join(characters)
 
     def strength_random(self, size, alphabet=None):
         """Return the strength of a random password."""
@@ -116,10 +111,10 @@ class PasswordGenerator(object):
         strength = int(math.log(nchars ** size, 2))
         return strength
 
-    def generate_diceware(self, words):
-        """Generate a Diceware passwords of `words` words."""
-        password = self.crypto.random(words, self.wordlist, ' ')
-        return password
+    def generate_diceware(self, size):
+        """Generate a Diceware passwords of *size* words."""
+        words = [crypto.random_element(self.wordlist) for i in range(size)]
+        return ' '.join(words)
 
     def strength_diceware(self, words):
         """Return the strength of a Diceware password."""

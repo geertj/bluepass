@@ -10,19 +10,19 @@ from __future__ import absolute_import, print_function
 
 import os
 import json
+import six
 
 import gruvi
 
 from bluepass import platform, util, logging
 from bluepass.factory import singleton
 from bluepass.component import Component
-from bluepass.crypto import CryptoProvider
 from bluepass.database import Database
 from bluepass.model import Model
 from bluepass.passwords import PasswordGenerator
 from bluepass.locator import Locator, ZeroconfLocationSource
 from bluepass.socketapi import SocketAPIServer
-from bluepass.syncapi import SyncAPIServer, SyncAPIPublisher, init_syncapi_ssl
+from bluepass.syncapi import SyncAPIServer, SyncAPIPublisher
 from bluepass.syncer import Syncer
 
 
@@ -64,12 +64,14 @@ class Backend(Component):
 
     def run(self):
         """Initialize the backend and run its main loop."""
+        if not six.PY3:
+            import bluepass.ssl
+            bluepass.ssl.patch_ssl_wrap_socket()
+
         self._log.debug('initializing backend components')
 
-        self._log.debug('initializing cryto provider')
-        crypto = singleton(CryptoProvider)
+        self._log.debug('initializing password generator')
         pwgen = singleton(PasswordGenerator)
-        init_syncapi_ssl(self.options.data_dir)
 
         self._log.debug('initializing database')
         fname = os.path.join(self.options.data_dir, 'bluepass.db')

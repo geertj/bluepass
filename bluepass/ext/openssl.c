@@ -1,5 +1,5 @@
 /*
- * This file is part of Bluepass. Bluepass is Copyright (c) 2012-2013
+ * This file is part of Bluepass. Bluepass is Copyright (c) 2012-2014
  * Geert Jansen.
  *
  * Bluepass is free software available under the GNU General Public License,
@@ -15,12 +15,9 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/rsa.h>
-#include <openssl/dh.h>
 #include <openssl/bn.h>
 #include <openssl/aes.h>
 #include <openssl/evp.h>
-#include <openssl/rand.h>
-#include <openssl/pem.h>
 
 
 static PyObject *openssl_Error = NULL;
@@ -75,7 +72,6 @@ static PyObject *openssl_Error = NULL;
     } } while (0)
 
 #define RSA_clear_free RSA_free
-#define DH_clear_free DH_free
 
 #define PyBytes_ClearFree(s) \
     do { if (s != NULL) { \
@@ -368,201 +364,6 @@ error:
 }
 
 static PyObject *
-openssl_dh_genparams(PyObject *self, PyObject *args)
-{
-    unsigned char *params = NULL;
-    int bits, generator, size = 0, check, ret;
-    DH *dh = NULL;
-    PyObject *Pparams = NULL;
-
-    if (!PyArg_ParseTuple(args, "ii:dh_genparams", &bits, &generator))
-        return NULL;
-
-    dh = DH_new();
-    CHECK_OPENSSL_ERROR(dh == NULL);
-    while (1)
-    {
-        Py_BEGIN_ALLOW_THREADS
-        ret = DH_generate_parameters_ex(dh, bits, generator, NULL);
-        Py_END_ALLOW_THREADS
-        CHECK_OPENSSL_ERROR(ret != 1);
-        ret = DH_check(dh, &check);
-        CHECK_OPENSSL_ERROR(ret != 1);
-        if (check == 0)
-            break;
-    }
-    size = i2d_DHparams(dh, &params);
-    CHECK_OPENSSL_ERROR(size <= 0);
-    Pparams = PyBytes_FromStringAndSize((char *) params, size);
-    CHECK_PYTHON_ERROR(Pparams == NULL);
-
-error:
-    DH_clear_free(dh);
-    OPENSSL_clear_free(params, size);
-    return Pparams;
-}
-
-static PyObject *
-openssl_dh_checkparams(PyObject *self, PyObject *args)
-{
-    unsigned char *params;
-    int paramslen, ret, check;
-    DH *dh = NULL;
-    PyObject *Presult = NULL;
-
-    if (!PyArg_ParseTuple(args, BS ":dh_checkparams", &params, &paramslen))
-        return NULL;
-
-    dh = d2i_DHparams(NULL, (const unsigned char **) &params, paramslen);
-    CHECK_OPENSSL_ERROR(dh == NULL);
-    ret = DH_check(dh, &check);
-    CHECK_OPENSSL_ERROR(ret != 1);
-    Presult = PyBool_FromLong(check == 0);
-    CHECK_PYTHON_ERROR(Presult == NULL);
-
-error:
-    DH_clear_free(dh);
-    return Presult;
-}
-
-static PyObject *
-openssl_dh_size(PyObject *self, PyObject *args)
-{
-    unsigned char *params;
-    int paramslen, nbytes;
-    DH *dh = NULL;
-    PyObject *Presult = NULL;
-
-    if (!PyArg_ParseTuple(args, BS ":dh_size", &params, &paramslen))
-        return NULL;
-
-    dh = d2i_DHparams(NULL, (const unsigned char **) &params, paramslen);
-    CHECK_OPENSSL_ERROR(dh == NULL);
-
-    nbytes = DH_size(dh);
-    CHECK_OPENSSL_ERROR(nbytes < 0);
-    Presult = PyLong_FromLong(nbytes * 8);
-    CHECK_PYTHON_ERROR(Presult == NULL);
-
-error:
-    DH_clear_free(dh);
-    return Presult;
-}
-
-static PyObject *
-openssl_dh_genkey(PyObject *self, PyObject *args)
-{
-    unsigned char *params, *privkey = NULL, *pubkey = NULL;
-    int paramslen, ret, privlen = 0, publen = 0;
-    DH *dh = NULL;
-    PyObject *Presult = NULL, *Pprivkey = NULL, *Ppubkey = NULL;
-
-    if (!PyArg_ParseTuple(args, BS ":dh_genkey", &params, &paramslen))
-        return NULL;
-
-    dh = d2i_DHparams(NULL, (const unsigned char **) &params, paramslen);
-    CHECK_OPENSSL_ERROR(dh == NULL);
-
-    ret = DH_generate_key(dh);
-    CHECK_OPENSSL_ERROR(ret == 0);
-    MALLOC(privkey, BN_num_bytes(dh->priv_key));
-    privlen = BN_bn2bin(dh->priv_key, privkey);
-    MALLOC(pubkey, BN_num_bytes(dh->pub_key));
-    publen = BN_bn2bin(dh->pub_key, pubkey);
-
-    Presult = PyTuple_New(2);
-    CHECK_PYTHON_ERROR(Presult == NULL);
-    Pprivkey = PyBytes_FromStringAndSize((char *) privkey, privlen);
-    CHECK_PYTHON_ERROR(Pprivkey == NULL);
-    Ppubkey = PyBytes_FromStringAndSize((char *) pubkey, publen);
-    CHECK_PYTHON_ERROR(Ppubkey == NULL);
-    PyTuple_SET_ITEM(Presult, 0, Pprivkey);
-    PyTuple_SET_ITEM(Presult, 1, Ppubkey);
-    goto cleanup;
-
-error:
-    Py_XDECREF(Presult);
-    PyBytes_ClearFree(Pprivkey);
-    PyBytes_ClearFree(Ppubkey);
-
-cleanup:
-    DH_clear_free(dh);
-    clear_free(privkey, privlen);
-    clear_free(pubkey, publen);
-    return Presult;
-}
-
-static PyObject *
-openssl_dh_checkkey(PyObject *self, PyObject *args)
-{
-    unsigned char *params, *pubkey;
-    int paramslen, publen, ret, check;
-    BIGNUM *bn = NULL;
-    DH *dh = NULL;
-    PyObject *Presult = NULL;
-
-    if (!PyArg_ParseTuple(args, BS BS ":dh_checkkey", &params, &paramslen,
-                          &pubkey, &publen))
-        return NULL;
-
-    dh = d2i_DHparams(NULL, (const unsigned char **) &params, paramslen);
-    CHECK_OPENSSL_ERROR(dh == NULL);
-    bn = BN_bin2bn(pubkey, publen, NULL);
-    CHECK_OPENSSL_ERROR(bn == NULL);
-    ret = DH_check_pub_key(dh, bn, &check);
-    CHECK_OPENSSL_ERROR(ret != 1);
-    Presult = PyBool_FromLong(check == 0);
-    CHECK_PYTHON_ERROR(Presult == NULL);
-
-error:
-    DH_clear_free(dh);
-    BN_clear_free(bn);
-    return Presult;
-}
-
-static PyObject *
-openssl_dh_compute(PyObject *self, PyObject *args)
-{
-    unsigned char *params, *privkey, *pubkey, *secret = NULL;
-    int paramslen, privlen, publen, seclen, size;
-    BIGNUM *bn = NULL;
-    DH *dh = NULL;
-    PyObject *Presult = NULL;
-
-    if (!PyArg_ParseTuple(args,  BS BS BS ":dh_compute", &params, &paramslen,
-                          &privkey, &privlen, &pubkey, &publen))
-            return NULL;
-
-    dh = d2i_DHparams(NULL, (const unsigned char **) &params, paramslen);
-    CHECK_OPENSSL_ERROR(dh == NULL);
-
-    dh->priv_key = BN_bin2bn(privkey, privlen, NULL);
-    CHECK_OPENSSL_ERROR(dh->priv_key == NULL);
-    bn = BN_bin2bn(pubkey, publen, NULL);
-    CHECK_OPENSSL_ERROR(bn == NULL);
-
-    seclen = DH_size(dh);
-    MALLOC(secret, seclen);
-    size = DH_compute_key(secret, bn, dh);
-    if (size < seclen) {
-        /* prepend a short secret with zeros.
-         * see: http://www.qacafe.com/static/pdf/ike_whitepaper.pdf */
-        memmove(secret+seclen-size, secret, size);
-        memset(secret, 0, seclen-size);
-        size = seclen;
-    }
-    CHECK_OPENSSL_ERROR(size <= 0);
-    Presult = PyBytes_FromStringAndSize((char *) secret, size);
-    CHECK_PYTHON_ERROR(Presult == NULL);
-
-error:
-    DH_clear_free(dh);
-    BN_clear_free(bn);
-    clear_free(secret, seclen);
-    return Presult;
-}
-
-static PyObject *
 openssl_aes_encrypt(PyObject *self, PyObject *args)
 {
     char *mode;
@@ -701,142 +502,6 @@ error:
     return Presult;
 }
 
-/*
- * The openssl_random() funcion could have been implemented much easier in
- * Python using os.urandom() as the random source. We implement it in C below
- * because that we can be much more careful to wipe all intermediary data used
- * in the construction of the random string.
- */
-
-static PyObject *
-openssl_random(PyObject *self, PyObject *args)
-{
-    int i, count, nitems, size, ret, buflen, buf2len, seplen, offset;
-    char *buf = NULL, *buf2 = NULL, *ptr, *sepptr;
-    PyObject *alphabet = NULL, *separator = NULL, *item, *Presult = NULL;
-
-    if (!PyArg_ParseTuple(args, "i|OO:random", &count, &alphabet, &separator))
-        return NULL;
-
-    if (alphabet == Py_None) {
-        buflen = count;
-        MALLOC(buf, buflen);
-        ret = RAND_bytes((unsigned char *) buf, count);
-        Presult = PyBytes_FromStringAndSize(buf, count);
-        CHECK_PYTHON_ERROR(Presult == NULL);
-    } else if (PyBytes_Check(alphabet)) {
-        buflen = count;
-        MALLOC(buf, buflen);
-        buf2len = sizeof(unsigned int);
-        MALLOC(buf2, buf2len);
-        ptr = PyBytes_AS_STRING(alphabet);
-        nitems = (int) PyBytes_GET_SIZE(alphabet);
-        for (i=0; i<count; i++) {
-            ret = RAND_bytes((unsigned char *) buf2, buf2len);
-            CHECK_OPENSSL_ERROR(ret != 1);
-            buf[i] = ptr[*((unsigned int *) buf2) % nitems];
-        }
-        Presult = PyBytes_FromStringAndSize(buf, buflen);
-        CHECK_PYTHON_ERROR(Presult == NULL);
-    } else if (PyUnicode_Check(alphabet)) {
-        buflen = count * (int) sizeof(Py_UNICODE);
-        MALLOC(buf, buflen);
-        buf2len = sizeof (unsigned int);
-        MALLOC(buf2, buf2len);
-        ptr = (char *) PyUnicode_AS_UNICODE(alphabet);
-        nitems = (int) PyUnicode_GET_SIZE(alphabet);
-        for (i=0; i<count; i++) {
-            ret = RAND_bytes((unsigned char *) buf2, buf2len);
-            CHECK_OPENSSL_ERROR(ret != 1);
-            ((Py_UNICODE *) buf)[i] =
-                    ((Py_UNICODE *) ptr)[*((unsigned int *) buf2) % nitems];
-        }
-        Presult = PyUnicode_FromUnicode((Py_UNICODE *) buf, count);
-        CHECK_PYTHON_ERROR(Presult == NULL);
-    } else if (PySequence_Check(alphabet) && PySequence_Size(alphabet) > 0 &&
-               PyBytes_Check(PySequence_GetItem(alphabet, 0))) {
-        if (!(separator == NULL || separator == Py_None) &&
-                    !PyBytes_Check(separator))
-            RETURN_ERROR("separator must be string");
-        buflen = count;
-        MALLOC(buf, buflen);
-        buf2len = sizeof (unsigned int);
-        MALLOC(buf2, buf2len);
-        nitems = (int) PySequence_Size(alphabet);
-        if (separator == NULL || separator == Py_None) {
-            seplen = 0;
-            sepptr = NULL;
-        } else { 
-            seplen = (int) PyBytes_GET_SIZE(separator);
-            sepptr = PyBytes_AS_STRING(separator);
-        }
-        for (i=0,offset=0; i<count; i++) {
-            ret = RAND_bytes((unsigned char *) buf2, buf2len);
-            CHECK_OPENSSL_ERROR(ret != 1);
-            item = PySequence_GetItem(alphabet,
-                        *((unsigned int *) buf2) % nitems);
-            if (!PyBytes_Check(item))
-                RETURN_ERROR("all items in the alphabet must be strings");
-            ptr = PyBytes_AS_STRING(item);
-            size = (int) PyBytes_GET_SIZE(item);
-            while (offset + size + seplen > buflen)
-                REALLOC(buf, buflen);
-            memcpy(buf+offset, ptr, size);
-            offset += size;
-            if ((sepptr != NULL) && (i != count-1)) {
-                memcpy(buf+offset, sepptr, seplen);
-                offset += seplen;
-            }
-        }
-        Presult = PyBytes_FromStringAndSize(buf, offset);
-        CHECK_PYTHON_ERROR(Presult == NULL);
-    } else if (PySequence_Check(alphabet) && PySequence_Size(alphabet) > 0 &&
-               PyUnicode_Check(PySequence_GetItem(alphabet, 0))) {
-        if (!(separator == NULL || separator == Py_None) &&
-                    !PyUnicode_Check(separator))
-            RETURN_ERROR("separator must be unicode");
-        buflen = count * (int) sizeof (Py_UNICODE);
-        MALLOC(buf, buflen);
-        buf2len = sizeof (unsigned int);
-        MALLOC(buf2, buf2len);
-        nitems = (int) PySequence_Size(alphabet);
-        if (separator == NULL || separator == Py_None) {
-            seplen = 0;
-            sepptr = NULL;
-        } else { 
-            seplen = (int) PyUnicode_GET_DATA_SIZE(separator);
-            sepptr = (char *) PyUnicode_AS_UNICODE(separator);
-        }
-        for (i=0,offset=0; i<count; i++) {
-            ret = RAND_bytes((unsigned char *) buf2, buf2len);
-            CHECK_OPENSSL_ERROR(ret != 1);
-            item = PySequence_GetItem(alphabet, *((unsigned int *) buf2) % nitems);
-            if (!PyUnicode_Check(item))
-                RETURN_ERROR("all items in the alphabet must be unicode");
-            ptr = (char *) PyUnicode_AS_UNICODE(item);
-            size = (int) PyUnicode_GET_DATA_SIZE(item);
-            while (offset + size + seplen > buflen)
-                REALLOC(buf, buflen);
-            memcpy(buf+offset, ptr, size);
-            offset += size;
-            if ((sepptr != NULL) && (i != count-1)) {
-                memcpy(buf+offset, sepptr, seplen);
-                offset += seplen;
-            }
-        }
-        Presult = PyUnicode_FromUnicode((Py_UNICODE *) buf,
-                                        offset / sizeof (Py_UNICODE));
-        CHECK_PYTHON_ERROR(Presult == NULL);
-    } else
-        RETURN_ERROR("'alphabet' must be a string, unicode, sequence of "
-                     "string, sequence of unicode, or None");
-
-error:
-    clear_free(buf, buflen);
-    clear_free(buf2, buf2len);
-    return Presult;
-}
-
 #ifdef TEST_BUILD
 /* The following few methods are infrastructure to test RSA-OAEP and RSA-PSS.
  * Both use random padding and so in order to use standard test vectors we
@@ -916,16 +581,9 @@ static PyMethodDef openssl_methods[] =
     { "rsa_decrypt", (PyCFunction) openssl_rsa_decrypt, METH_VARARGS },
     { "rsa_sign", (PyCFunction) openssl_rsa_sign, METH_VARARGS },
     { "rsa_verify", (PyCFunction) openssl_rsa_verify, METH_VARARGS },
-    { "dh_genparams", (PyCFunction) openssl_dh_genparams, METH_VARARGS },
-    { "dh_checkparams", (PyCFunction) openssl_dh_checkparams, METH_VARARGS },
-    { "dh_size", (PyCFunction) openssl_dh_size, METH_VARARGS },
-    { "dh_genkey", (PyCFunction) openssl_dh_genkey, METH_VARARGS },
-    { "dh_checkkey", (PyCFunction) openssl_dh_checkkey, METH_VARARGS },
-    { "dh_compute", (PyCFunction) openssl_dh_compute, METH_VARARGS },
     { "aes_encrypt", (PyCFunction) openssl_aes_encrypt, METH_VARARGS },
     { "aes_decrypt", (PyCFunction) openssl_aes_decrypt, METH_VARARGS },
     { "pbkdf2", (PyCFunction) openssl_pbkdf2, METH_VARARGS },
-    { "random", (PyCFunction) openssl_random, METH_VARARGS },
 #ifdef TEST_BUILD
     { "_insert_random_bytes",
         (PyCFunction) _openssl_insert_random_bytes, METH_VARARGS },

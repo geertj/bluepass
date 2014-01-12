@@ -11,12 +11,14 @@
  */
 
 #include <Python.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <openssl/ssl.h>
 #include <openssl/ssl3.h>
 #include <openssl/err.h>
 #include <openssl/dh.h>
+#include <openssl/pem.h>
 
 
 static PyObject *sslex_Error = NULL;
@@ -60,9 +62,8 @@ static PyObject *sslex_Error = NULL;
  * Define a shadow structure that has the same layout as PySSLObject from
  * the _ssl module. This allows us to compile this module separately from
  * the Python source tree. Fortunately, the format has been kept consistent
- * in Python 2.6 and 2.7 (our target). If we wanted to port this module to
- * Python 3.x then this needs to be updated as the "ctx" member has been
- * removed.
+ * in Python 2.6 and 2.7. On Python 3 it's not needed because the _ssl there
+ * contains everything we need.
  */
 
 typedef struct
@@ -133,33 +134,35 @@ error:
 }
 
 static PyObject *
-sslex_set_dh_params(PyObject *self, PyObject *args)
+sslex_load_dh_params(PyObject *self, PyObject *args)
 {
-    unsigned char *params;
-    int paramslen, single_use, ret;
+    char *path;
+    int ret;
     PyObject *Pret = NULL;
     PySSLShadowObject *sslob;
     DH *dh = NULL;
+    FILE *fpem = NULL;
 
-    if (!PyArg_ParseTuple(args, "Os#i:set_dh_params", &sslob, &params,
-                          &paramslen, &single_use))
+    if (!PyArg_ParseTuple(args, "Os:load_dh_params", &sslob, &path))
         return NULL;
     if (strcmp(sslob->ob_type->tp_name, "ssl.SSLContext"))
         RETURN_ERROR("expecting a SSLContext");
 
-    dh = d2i_DHparams(NULL, (const unsigned char **) &params, paramslen);
+    fpem = fopen(path, "rb");
+    CHECK_ERROR(fpem == NULL, "Could not open file %s", path);
+
+    dh = PEM_read_DHparams(fpem, NULL, NULL, NULL);
     CHECK_OPENSSL_ERROR(dh == NULL);
+
     ret = (int) SSL_set_tmp_dh(sslob->ssl, dh);
     CHECK_OPENSSL_ERROR(ret != 1);
     
-    if (single_use)
-        SSL_set_options(sslob->ssl, SSL_OP_SINGLE_DH_USE);
-
     Py_INCREF(Py_None);
     Pret = Py_None;
 
 error:
-    DH_free(dh);
+    if (dh) DH_free(dh);
+    if (fpem) fclose(fpem);
     return Pret;
 }
 
@@ -197,8 +200,8 @@ static PyMethodDef sslex_methods[] =
             (PyCFunction) sslex_set_ciphers, METH_VARARGS },
     { "get_channel_binding",
             (PyCFunction) sslex_get_channel_binding, METH_VARARGS },
-    { "set_dh_params",
-            (PyCFunction) sslex_set_dh_params, METH_VARARGS },
+    { "load_dh_params",
+            (PyCFunction) sslex_load_dh_params, METH_VARARGS },
     { "_set_accept_state",
             (PyCFunction) sslex__set_accept_state, METH_VARARGS },
 #endif

@@ -149,8 +149,8 @@ def main():
             Extension('bluepass.ext._sslex', ['bluepass/ext/_sslex.c'],
                       libraries=['ssl', 'crypto'], **extargs)
         ],
-        package_data = {'bluepass': ['assets/png/*', 'assets/diceware/*']},
-        install_requires = ['pycparser', 'cffi', 'gruvi'],
+        package_data = {'bluepass': ['assets/*/*']},
+        install_requires = ['pycparser', 'cffi', 'gruvi', 'six'],
         entry_points = {'console_scripts': ['bluepass = bluepass.main:main']},
         test_suite = 'nose.collector',
         **version_info

@@ -1,5 +1,5 @@
 #
-# This file is part of Bluepass. Bluepass is Copyright (c) 2012-2013
+# This file is part of Bluepass. Bluepass is Copyright (c) 2012-2014
 # Geert Jansen.
 #
 # Bluepass is free software available under the GNU General Public License,
@@ -7,222 +7,99 @@
 # licensing terms.
 
 import os
-import hmac
 import time
-import math
+import random
 import hashlib
-import logging
 import uuid
-import textwrap
+import hmac as hmaclib
 import binascii
 
-from bluepass.ext import openssl
-from bluepass.logging import *
+from bluepass import logging
+from bluepass.ext.openssl import *
 
-CryptoError = openssl.Error
+__all__ = []
 
-# Some useful commonly used DH parameters.
-dhparams = \
-{
-    'skip2048': textwrap.dedent("""\
-    MIIBCAKCAQEA9kJXtwh/CBdyorrWqULzBej5UxE5T7bxbrlLOCDaAadWoxTpj0BV
-    89AHxstDqZSt90xkhkn4DIO9ZekX1KHTUPj1WV/cdlJPPT2N286Z4VeSWc39uK50
-    T8X8dryDxUcwYc58yWb/Ffm7/ZFexwGq01uejaClcjrUGvC/RgBYK+X0iP1YTknb
-    zSC0neSRBzZrM2w4DUUdD3yIsxx8Wy2O9vPJI8BD8KVbGI2Ou1WMuF040zT9fBdX
-    Q6MdGGzeMyEstSr/POGxKUAYEY18hKcKctaGxAMZyAcpesqVDNmWn6vQClCbAkbT
-    CD1mpF1Bn5x8vYlLIhkmuquiXsNV6TILOwIBAg==
-    """),
-    'ietf768': textwrap.dedent("""\
-    MGYCYQD//////////8kP2qIhaMI0xMZii4DcHNEpAk4IimfMdAILvqY7E5siUUoIeY40BN3vlRmz
-    zTpDGzArCm3yXxQ3T+E1bW1RwkXkhbV2Yl5+xvRMQummOjYg//////////8CAQI=
-    """),
-    'ietf1024': textwrap.dedent("""\
-    MIGHAoGBAP//////////yQ/aoiFowjTExmKLgNwc0SkCTgiKZ8x0Agu+pjsTmyJRSgh5jjQE3e+V
-    GbPNOkMbMCsKbfJfFDdP4TVtbVHCReSFtXZiXn7G9ExC6aY37WsL/1y29Aa37e44a/taiZ+lrp8k
-    EXxLH+ZJKGZR7OZTgf//////////AgEC
-    """)
-}
+_pbkdf2_speed = {}
+
+def measure_pbkdf2_speed(prf='hmac-sha1'):
+    """Measure the speed of PBKDF2 on this system."""
+    salt = password = '0123456789abcdef'
+    length = 1; count = 1000
+    log = logging.get_logger('measure_pbkdf2_speed()')
+    log.debug('starting PBKDF2 speed measurement')
+    start = time.time()
+    while True:
+        startrun = time.time()
+        pbkdf2(password, salt, count, length, prf)
+        endrun = time.time()
+        if endrun - startrun > 0.2:
+            break
+        count *= 2
+    end = time.time()
+    speed = int(count / (endrun - startrun))
+    log.debug('PBKDF2 speed is {} iterations / second', speed)
+    log.debug('PBKDF2 speed measurement took {:2f}', (end - start))
+    return speed
+
+def pbkdf2_speed(prf='hmac-sha1'):
+    """Return the speed in rounds/second for generating a key
+    with PBKDF2 of up to the hash length size of `prf`."""
+    if prf not in _pbkdf2_speed:
+        _pbkdf2_speed[prf] = measure_pbkdf2_speed(prf)
+    return _pbkdf2_speed[prf]
 
 
-class CryptoProvider(object):
-    """Crypto provider.
+def random_bytes(count):
+    """Return *count* random bytes."""
+    return os.urandom(count)
 
-    This class exposes the cryptographic primitives that are required by
-    Bluepass. Currently the only available engine is OpenSSL, but at some
-    point this could use a native platform crypto provider.
-    """
+def random_int(below):
+    """Return a random integer < *below*."""
+    return random.randrange(0, below)
 
-    _pbkdf2_speed = {}
+def random_uuid():
+    """Return a type-4 random UUID."""
+    return str(uuid.uuid4())
 
-    def __init__(self, engine=None):
-        """Create a new crypto provider."""
-        self.engine = engine or openssl
-        self._log = get_logger(self)
+def random_token(bits):
+    """Return a random string token with at least *bits* of entropy."""
+    size = (bits + 7) // 8
+    return binascii.hexlify(random_bytes(size)).decode('ascii')
 
-    def rsa_genkey(self, bits):
-        """Generate an RSA key pair of `bits' bits. The result is a 2-tuple
-        containing the private and public keys. The keys themselves as ASN.1
-        encoded bitstrings.
-        """
-        return self.engine.rsa_genkey(bits)
+def random_element(elements):
+    """Return a random element from *elements*."""
+    return random.choice(elements)
 
-    def rsa_checkkey(self, privkey):
-        """Check that `privkey' is a valid RSA private key."""
-        return self.engine.rsa_checkkey(privkey)
 
-    def rsa_size(self, pubkey):
-        """Return the size in bits of an RSA public key."""
-        return self.engine.rsa_size(pubkey)
+def _get_hash(name):
+    if not hasattr(hashlib, name):
+        raise ValueError('no such hash function: %s' % name)
+    return getattr(hashlib, name)
 
-    def rsa_encrypt(self, s, pubkey, padding='oaep'):
-        """RSA Encrypt a string `s' with public key `pubkey'. This uses direct
-        encryption with OAEP padding.
-        """
-        return self.engine.rsa_encrypt(s, pubkey, padding)
+def hmac(key, message, hash='sha256'):
+    """Return the HMAC of *message* under *key*."""
+    md = _get_hash(hash)
+    return hmaclib.new(key, message, md).digest()
 
-    def rsa_decrypt(self, s, privkey, padding='oaep'):
-        """RSA Decrypt a string `s' using the private key `privkey'."""
-        return self.engine.rsa_decrypt(s, privkey, padding)
 
-    def rsa_sign(self, s, privkey, padding='pss-sha256'):
-        """Create a detached RSA signature of `s' using private key
-        `privkey'."""
-        return self.engine.rsa_sign(s, privkey, padding)
-
-    def rsa_verify(self, s, sig, pubkey, padding='pss-sha256'):
-        """Verify a detached RSA signature `sig' over `s' using the public key
-        `pubkey'."""
-        return self.engine.rsa_verify(s, sig, pubkey, padding)
-
-    def dh_genparams(self, bits, generator):
-        """Generate Diffie-Hellman parameters. The prime will be `bits'
-        bits in size and `generator' will be the generator."""
-        return self.engine.dh_genparams(bits)
-
-    def dh_checkparams(self, params):
-        """Check Diffie-Hellman parameters."""
-        return self.engine.dh_checkparams(params)
-
-    def dh_size(self, params):
-        """Return the size in bits of the DH parameters `params'."""
-        return self.engine.dh_size(params)
-
-    def dh_genkey(self, params):
-        """Generate a Diffie-Hellman key pair. The return value is a tuple
-        (privkey, pubkey)."""
-        return self.engine.dh_genkey(params)
-
-    def dh_checkkey(self, params, pubkey):
-        """Check a Diffie-Hellman public key."""
-        return self.engine.dh_checkkey(params, pubkey)
-
-    def dh_compute(self, params, privkey, pubkey):
-        """Perform a Diffie-Hellman key exchange. The `privkey' parameter is
-        our private key, `pubkey' is our peer's public key."""
-        return self.engine.dh_compute(params, privkey, pubkey)
-
-    def aes_encrypt(self, s, key, iv, mode='cbc-pkcs7'):
-        """AES encrypt a string `s' with key `key'."""
-        return self.engine.aes_encrypt(s, key, iv, mode)
-
-    def aes_decrypt(self, s, key, iv, mode='cbc-pkcs7'):
-        """AES decrypt a string `s' with key `key'."""
-        return self.engine.aes_decrypt(s, key, iv, mode)
-
-    def pbkdf2(self, password, salt, count, length, prf='hmac-sha1'):
-        """PBKDF2 key derivation function from PKCS#5."""
-        return self.engine.pbkdf2(password, salt, count, length, prf)
-
-    def _measure_pbkdf2_speed(self, prf='hmac-sha1'):
-        """Measure the speed of PBKDF2 on this system."""
-        salt = password = '0123456789abcdef'
-        length = 1; count = 1000
-        self._log.debug('starting PBKDF2 speed measurement')
-        start = time.time()
-        while True:
-            startrun = time.time()
-            self.pbkdf2(password, salt, count, length, prf)
-            endrun = time.time()
-            if endrun - startrun > 0.4:
-                break
-            count = int(count * math.e)
-        end = time.time()
-        speed = int(count / (endrun - startrun))
-        self._log.debug('PBKDF2 speed is {} iterations / second', speed)
-        self._log.debug('PBKDF2 speed measurement took {:2f}', (end - start))
-        # Store the speed in the class so that it can be re-used by
-        # other instances.
-        self._pbkdf2_speed[prf] = speed
-
-    def pbkdf2_speed(self, prf='hmac-sha1'):
-        """Return the speed in rounds/second for generating a key
-        with PBKDF2 of up to the hash length size of `prf`."""
-        if prf not in self._pbkdf2_speed:
-            self._measure_pbkdf2_speed(prf)
-        return self._pbkdf2_speed[prf]
-
-    def pbkdf2_prf_available(self, prf):
-        """Test if a given PRF is available for PBKDF2."""
-        try:
-            dummy = self.pbkdf2('test', 'test', 1, 1, prf)
-        except CryptoError:
-            return False
-        return True
-
-    def random(self, count, alphabet=None, separator=None):
-        """Create a random string.
-        
-        The random string will be the concatenation of `count` elements
-        randomly chosen from `alphabet`. The alphabet parameter can be a
-        string, unicode string, a sequence of strings, or a sequence of unicode
-        strings. If no alphabet is provided, a default alphabet is used
-        containing all possible single byte values (0 through to 255).
-
-        The type of the return value is the same as the elements in the
-        alphabet (string or unicode).
-        """
-        return self.engine.random(count, alphabet, separator)
-
-    def randint(self, bits):
-        """Return a random integer with `bits' bits."""
-        nbytes = (bits + 7) // 8
-        mask = (1<<bits)-1
-        return int(binascii.hexlify(self.random(nbytes)), 16) & mask
-
-    def randuuid(self):
-        """Return a type-4 random UUID."""
-        return str(uuid.uuid4())
-
-    def _get_hash(self, name):
-        """INTERNAL: return a hash contructor from its name."""
-        if not hasattr(hashlib, name):
-            raise ValueError('no such hash function: %s' % name)
-        return getattr(hashlib, name)
-
-    def hmac(self, key, message, hash='sha256'):
-        """Return the HMAC of `message' under `key', using the hash function
-        `hash' (default: sha256)."""
-        md = self._get_hash(hash)
-        return hmac.new(key, message, md).digest()
-
-    def hkdf(self, password, salt, info, length, hash='sha256'):
-        """HKDF key derivation function."""
-        md = self._get_hash(hash)
-        md_size = md().digest_size
-        if length > 255*md_size:
-            raise ValueError('can only generate keys up to 255*md_size bytes')
-        if not isinstance(password, bytes):
-            password = password.encode('ascii')
-        if salt is None:
-            salt = b'\x00' * md_size
-        elif not isinstance(salt, bytes):
-            salt = salt.encode('ascii')
-        if not isinstance(info, bytes):
-            info = info.encode('ascii')
-        prk = hmac.new(salt, password, md).digest()
-        blocks = [b'']
-        nblocks = (length + md_size - 1) // md_size
-        for i in range(nblocks):
-            blocks.append(hmac.new(prk, blocks[i] + info +
-                                    chr(i+1).encode('ascii'), md).digest())
-        return b''.join(blocks)[:length]
+def hkdf(password, salt, info, length, hash='sha256'):
+    """HKDF key derivation function."""
+    md = _get_hash(hash)
+    md_size = md().digest_size
+    if length > 255*md_size:
+        raise ValueError('can only generate keys up to 255*md_size bytes')
+    if not isinstance(password, bytes):
+        password = password.encode('ascii')
+    if salt is None:
+        salt = b'\x00' * md_size
+    elif not isinstance(salt, bytes):
+        salt = salt.encode('ascii')
+    if not isinstance(info, bytes):
+        info = info.encode('ascii')
+    prk = hmaclib.new(salt, password, md).digest()
+    blocks = [b'']
+    nblocks = (length + md_size - 1) // md_size
+    for i in range(nblocks):
+        blocks.append(hmaclib.new(prk, blocks[i] + info +
+                                chr(i+1).encode('ascii'), md).digest())
+    return b''.join(blocks)[:length]
