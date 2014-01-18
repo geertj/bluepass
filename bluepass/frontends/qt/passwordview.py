@@ -9,7 +9,6 @@
 from __future__ import absolute_import, print_function
 
 import math
-import logging
 from string import Template
 
 from PyQt4.QtCore import Slot, Signal, Property, Qt
@@ -18,7 +17,9 @@ from PyQt4.QtGui import (QScrollArea, QWidget, QLabel, QVBoxLayout, QPixmap,
         QApplication, QTabBar, QSizePolicy, QCheckBox, QStackedWidget,
         QGridLayout, QMenu, QKeySequence)
 
+from bluepass import logging
 from bluepass.util import asset
+
 from .util import SortedList
 from .socketapi import QtSocketApiError
 from .dialogs import EditPasswordDialog
@@ -440,7 +441,7 @@ class VaultView(QWidget):
         self.versions = {}
         self.version_order = {}
         self.current_item = {}
-        self.logger = logging.getLogger(__name__)
+        self.logger = logging.get_logger(self)
         self.addWidgets()
         self.setStyleSheet(self.stylesheet)
         editpwdlg = EditPasswordDialog()

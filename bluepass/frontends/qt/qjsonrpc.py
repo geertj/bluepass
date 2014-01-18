@@ -11,7 +11,6 @@ from __future__ import absolute_import, print_function
 import json
 import errno
 import socket
-import logging
 import collections
 import fnmatch
 
@@ -19,7 +18,7 @@ from PyQt4.QtCore import (QEvent, QObject, QSocketNotifier, QTimer, QEventLoop,
                           QCoreApplication)
 
 from gruvi import jsonrpc
-from bluepass import platform, util
+from bluepass import platform, util, logging
 
 
 __all__ = ['QJsonRpcError', 'QJsonRpcClient', 'QJsonRpcHandler', 'request',
@@ -64,7 +63,7 @@ class QJsonRpcClient(QObject):
         self._parser = jsonrpc.JsonRpcParser()
         self._read_notifier = None
         self._write_notifier = None
-        self._log = logging.getLogger('bluepass.qjsonrpc')
+        self._log = logging.get_logger(self)
 
     @property
     def timeout(self):

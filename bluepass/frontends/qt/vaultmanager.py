@@ -9,7 +9,6 @@
 from __future__ import absolute_import, print_function
 
 import time
-import logging
 
 from PyQt4.QtCore import Slot, Qt, QTimer, QPoint, QSize, QTimer, QEventLoop
 from PyQt4.QtGui import (QWidget, QDialog, QPushButton, QHBoxLayout,
@@ -20,8 +19,8 @@ from PyQt4.QtGui import (QWidget, QDialog, QPushButton, QHBoxLayout,
 
 Item = QTableWidgetItem
 
-from .passwordbutton import (GeneratePasswordButton,
-        DicewarePasswordConfiguration)
+from bluepass import logging
+from .passwordbutton import (GeneratePasswordButton, DicewarePasswordConfiguration)
 
 
 class Overlay(QFrame):
@@ -366,7 +365,7 @@ class CreateVault(Page):
         self.method = 0
         self.uuid = None
         self.cookie = None
-        self.logger = logging.getLogger(__name__)
+        self.logger = logging.get_logger(self)
         self.addWidgets()
         self.setStyleSheet(self.stylesheet)
         backend = QApplication.instance().backend()
