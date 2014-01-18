@@ -136,10 +136,7 @@ def main():
         # Silence warnings about our RETURN_ERROR macro
         extargs['extra_compile_args'] = ['-Wno-format']
     setup(
-        packages = ['bluepass', 'bluepass.ext',
-                    'bluepass.platform', 'bluepass.platform.posix',
-                    'bluepass.platform.linux', 'bluepass.platform.freedesktop',
-                    'bluepass.platform.darwin',
+        packages = ['bluepass', 'bluepass.ext', 'bluepass.platform',
                     'bluepass.frontends', 'bluepass.frontends.qt'],
         ext_modules = [
             Extension('bluepass.ext.openssl', ['bluepass/ext/openssl.c'],

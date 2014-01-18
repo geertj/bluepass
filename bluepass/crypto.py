@@ -79,26 +79,3 @@ def hmac(key, message, hash='sha256'):
     """Return the HMAC of *message* under *key*."""
     md = _get_hash(hash)
     return hmaclib.new(key, message, md).digest()
-
-
-def hkdf(password, salt, info, length, hash='sha256'):
-    """HKDF key derivation function."""
-    md = _get_hash(hash)
-    md_size = md().digest_size
-    if length > 255*md_size:
-        raise ValueError('can only generate keys up to 255*md_size bytes')
-    if not isinstance(password, bytes):
-        password = password.encode('ascii')
-    if salt is None:
-        salt = b'\x00' * md_size
-    elif not isinstance(salt, bytes):
-        salt = salt.encode('ascii')
-    if not isinstance(info, bytes):
-        info = info.encode('ascii')
-    prk = hmaclib.new(salt, password, md).digest()
-    blocks = [b'']
-    nblocks = (length + md_size - 1) // md_size
-    for i in range(nblocks):
-        blocks.append(hmaclib.new(prk, blocks[i] + info +
-                                chr(i+1).encode('ascii'), md).digest())
-    return b''.join(blocks)[:length]

@@ -1,5 +1,5 @@
 #
-# This file is part of Bluepass. Bluepass is Copyright (c) 2012-2013
+# This file is part of Bluepass. Bluepass is Copyright (c) 2012-2014
 # Geert Jansen.
 #
 # Bluepass is free software available under the GNU General Public License,
@@ -13,11 +13,7 @@ import sys
 # Unix like operating systems
 
 if hasattr(os, 'fork'):
-    from bluepass.platform.posix.misc import *
-    if sys.platform == 'linux2':
-        from bluepass.platform.linux.misc import *
-    elif sys.platform == 'darwin':
-        from bluepass.platform.darwin.misc import *
+    from bluepass.platform.posix import *
 
     default_listen_address = os.path.join(get_sockdir(), 'bluepass-dev.sock')
     #default_listen_address = 'localhost:0'
@@ -53,6 +49,6 @@ def get_location_sources():
         return _location_sources
     _location_sources = []
     if os.environ.get('DBUS_SESSION_BUS_ADDRESS'):
-        from bluepass.platform.freedesktop.avahi import AvahiLocationSource
+        from bluepass.platform.avahi import AvahiLocationSource
         _location_sources.append(AvahiLocationSource)
     return _location_sources
