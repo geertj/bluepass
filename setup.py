@@ -114,33 +114,10 @@ def update_manifest():
     print('removed {0}'.format(sourcestxt))
 
 
-def copy_assets():
-    """Copy or symlink the assets in the package directory."""
-    assets = os.path.join('bluepass', 'assets')
-    try:
-        st = os.lstat(assets)
-    except OSError:
-        st = None
-    if hasattr(os, 'symlink'):
-        if st and not stat.S_ISLNK(st.st_mode):
-            raise RuntimeError('{} exists but is not a symlink'.format(assets))
-        if st is None:
-            source = os.path.join('..', 'assets')
-            os.symlink(source, assets)
-            print('created symlink {} -> {}'.format(assets, source))
-    else:
-        if st and not stat.S_ISDIR(st.st_mode):
-            raise Runtimeerror('{} exists but is not a dir'.format(assets))
-        source = 'assets'
-        dir_util.copy_tree(source, assets)
-        print('copied directory {} -> {}'.format(source, assets))
-
-
 def main():
     os.chdir(topdir)
     update_version()
     update_manifest()
-    copy_assets()
     extargs = {}
     if sys.platform == 'darwin':
         # Silence warnings about our RETURN_ERROR macro
