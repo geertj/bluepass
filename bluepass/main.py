@@ -51,6 +51,7 @@ def create_parser():
                         help='List available frontends and exit.')
     parser.add_argument('--run-backend', action='store_true', help='Run the backend')
     parser.add_argument('--timeout', type=int, help='Backend timeout', default=2)
+    parser.add_argument('--lock-memory', action='store_true', help='Lock process memory')
     return parser
 
 
@@ -177,6 +178,20 @@ def main():
     if options.connect and options.run_backend:
         print('Error: specify either --connect or --run-backend but not both', file=sys.stderr)
         return 1
+
+    # Enable some security related settings
+
+    if not options.debug:
+        if hasattr(platform, 'disable_debugging'):
+            platform.disable_debugging()
+        else:
+            print('Warning: platform does not define disable_debugging()')
+
+    if options.lock_memory:
+        if not hasattr(platform, 'lock_all_memory'):
+            print('Error: platform does not define lock_all_memory()')
+            return 1
+        platform.lock_all_memory()
 
     # Unless we are spawning the backend and can create our own auth token,
     # we need the user to specify it.

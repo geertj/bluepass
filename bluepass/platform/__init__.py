@@ -14,6 +14,8 @@ import sys
 
 if hasattr(os, 'fork'):
     from bluepass.platform.posix import *
+    if sys.platform in ('linux', 'linux2'):
+        from bluepass.platform.linux import *
 
     default_listen_address = os.path.join(get_sockdir(), 'bluepass-dev.sock')
     #default_listen_address = 'localhost:0'

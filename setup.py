@@ -18,6 +18,15 @@ import subprocess
 from distutils import dir_util
 from setuptools import setup, Extension
 
+# CFFI is needed to call setup() and therefore it needs to be installed before
+# this setup script can be run.
+
+try:
+    import cffi
+except ImportError:
+    sys.stderr.write('Error: CFFI (required for setup) is not available.\n')
+    sys.stderr.write('Please use "pip install cffi", or equivalent.\n')
+    sys.exit(1)
 
 version_info = {
     'name': 'bluepass',
@@ -41,6 +50,8 @@ version_info = {
         'Topic :: Utilities'
     ],
 }
+
+topdir, _ = os.path.split(os.path.abspath(__file__))
 
 
 def update_version():
@@ -126,7 +137,6 @@ def copy_assets():
 
 
 def main():
-    topdir, _ = os.path.split(os.path.abspath(__file__))
     os.chdir(topdir)
     update_version()
     update_manifest()
@@ -135,17 +145,16 @@ def main():
     if sys.platform == 'darwin':
         # Silence warnings about our RETURN_ERROR macro
         extargs['extra_compile_args'] = ['-Wno-format']
+    from bluepass.platform import platform_ffi
     setup(
         packages = ['bluepass', 'bluepass.ext', 'bluepass.platform',
                     'bluepass.frontends', 'bluepass.frontends.qt'],
         ext_modules = [
             Extension('bluepass.ext.openssl', ['bluepass/ext/openssl.c'],
                       libraries=['ssl', 'crypto'], **extargs),
-            Extension('bluepass.ext.secmem', ['bluepass/ext/secmem.c'],
-                      **extargs),
             Extension('bluepass.ext._sslex', ['bluepass/ext/_sslex.c'],
-                      libraries=['ssl', 'crypto'], **extargs)
-        ],
+                      libraries=['ssl', 'crypto'], **extargs),
+            platform_ffi.ffi.verifier.get_extension()],
         package_data = {'bluepass': ['assets/*/*']},
         install_requires = ['pycparser', 'cffi', 'gruvi', 'six'],
         entry_points = {'console_scripts': ['bluepass = bluepass.main:main']},
