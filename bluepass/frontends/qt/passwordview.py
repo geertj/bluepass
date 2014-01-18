@@ -647,7 +647,7 @@ class VaultView(QWidget):
                     current_order.removeat(curpos)
                     items.removeItem(item)
                     item.hide(); item.destroy()
-                    self.groupRemoved.emit(uuid, group)
+                    self.groupRemoved.emit(uuid, curgroup)
         # We can now update the version cache
         for version in versions:
             current_versions[version['id']] = version
