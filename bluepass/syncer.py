@@ -16,7 +16,7 @@ from bluepass import logging
 from bluepass.factory import instance
 from bluepass.model import Model
 from bluepass.locator import Locator
-from bluepass.syncapi import SyncAPIClient, SyncAPIError
+from bluepass.syncapi import SyncApiClient, SyncApiError
 
 
 class Syncer(Fiber):
@@ -154,10 +154,10 @@ class Syncer(Fiber):
                         continue  # already synced
                     self._log.debug('syncing with node {}', node)
                     if client is None:
-                        client = SyncAPIClient()
+                        client = SyncApiClient()
                         try:
                             client.connect(addr['addr'])
-                        except SyncAPIError as e:
+                        except SyncApiError as e:
                             self._log.error('could not connect to {}: {}', addr, str(e))
                             client.close()
                             break
@@ -167,7 +167,7 @@ class Syncer(Fiber):
                     starttime = time.time()
                     try:
                         client.sync(vault, model)
-                    except SyncAPIError:
+                    except SyncApiError:
                         self._log.error('failed to sync vault {} at {}', vault, addr)
                         client.close()
                         client = None

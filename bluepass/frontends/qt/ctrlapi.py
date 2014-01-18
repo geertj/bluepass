@@ -1,5 +1,5 @@
 #
-# This file is part of Bluepass. Bluepass is Copyright (c) 2012-2013
+# This file is part of Bluepass. Bluepass is Copyright (c) 2012-2014
 # Geert Jansen.
 #
 # Bluepass is free software available under the GNU General Public License,
@@ -14,17 +14,17 @@ from PyQt4.QtGui import QApplication
 from . import qjsonrpc
 from .qjsonrpc import *
 
-__all__ = ['QtSocketApiError', 'QtSocketApiClient']
+__all__ = ['ControlApiError', 'ControlApiClient']
 
 
-QtSocketApiError = QJsonRpcError
+ControlApiError = QJsonRpcError
 
 
-class QtSocketApiHandler(QJsonRpcHandler):
-    """JSON-RPC message handler used by :class:`QtSocketApiClient`."""
+class ControlApiHandler(QJsonRpcHandler):
+    """JSON-RPC message handler used by :class:`ControlApiClient`."""
 
     def __init__(self, notification_handler):
-        super(QtSocketApiHandler, self).__init__()
+        super(ControlApiHandler, self).__init__()
         self._notification_handler = notification_handler
 
     @notification('*')
@@ -43,12 +43,12 @@ class QtSocketApiHandler(QJsonRpcHandler):
         mainwindow.showPairingApprovalDialog(name, vault, pin, kxid, send_response)
 
 
-class QtSocketApiClient(QJsonRpcClient):
-    """Qt frontend client for the Bluepass socket API."""
+class ControlApiClient(QJsonRpcClient):
+    """Qt frontend client for the Bluepass control API."""
 
     def __init__(self, parent=None):
-        handler = QtSocketApiHandler(self._notification_handler)
-        super(QtSocketApiClient, self).__init__(handler, parent=parent)
+        handler = ControlApiHandler(self._notification_handler)
+        super(ControlApiClient, self).__init__(handler, parent=parent)
 
     def _notification_handler(self, message):
         """Forward notifications to corresponding Qt signals."""
@@ -61,7 +61,7 @@ class QtSocketApiClient(QJsonRpcClient):
 
     VaultAdded = Signal(dict)
     VaultRemoved = Signal(dict)
-    VaultCreationComplete = Signal(str, str, dict)
+    VaultCreationComplete = Signal(str, bool, dict)
     VaultLocked = Signal(dict)
     VaultUnlocked = Signal(dict)
     VersionsAdded = Signal(str, list)
@@ -70,21 +70,24 @@ class QtSocketApiClient(QJsonRpcClient):
     NeighborDisappeared = Signal(dict)
     AllowPairingStarted = Signal(int)
     AllowPairingEnded = Signal()
-    PairNeighborStep1Completed = Signal(str, str, dict)
-    PairNeighborStep2Completed = Signal(str, str, dict)
+    PairNeighborStep1Completed = Signal(str, bool, dict)
+    PairNeighborStep2Completed = Signal(str, bool, dict)
     PairingComplete = Signal(str)
+
+    def login(self, auth_token):
+        return self.call_method('login', auth_token)
 
     def get_version_info(self):
         return self.call_method('get_version_info')
 
-    def get_config(self):
-        return self.call_method('get_config')
+    def get_config(self, name):
+        return self.call_method('get_config', name)
 
     def update_config(self, config):
         return self.call_method('update_config', config)
 
-    def create_vault(self, name, password, async=False):
-        return self.call_method('create_vault', name, password, async)
+    def create_vault(self, name, password):
+        return self.call_method('create_vault', name, password)
 
     def get_vault(self, uuid):
         return self.call_method('get_vault', uuid)

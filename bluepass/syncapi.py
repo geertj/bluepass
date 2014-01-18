@@ -1,10 +1,12 @@
 #
-# This file is part of Bluepass. Bluepass is Copyright (c) 2012-2013
+# This file is part of Bluepass. Bluepass is Copyright (c) 2012-2014
 # Geert Jansen.
 #
 # Bluepass is free software available under the GNU General Public License,
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
+
+from __future__ import absolute_import, print_function
 
 import os
 import re
@@ -27,15 +29,16 @@ from gruvi import Fiber, compat, util
 from gruvi.http import HttpServer, HttpClient
 
 from bluepass import _version, json, base64, uuid4, util, logging, crypto
-from bluepass.error import StructuredError
+from bluepass.errors import *
 from bluepass.factory import instance, singleton
 from bluepass.model import Model
 from bluepass.locator import Locator
 
-__all__ = ('SyncAPIError', 'SyncAPIClient', 'SyncAPIApplication', 'SyncAPIServer')
+__all__ = ['SyncApiError', 'SyncApiClient', 'SyncApiApplication',
+           'SyncApiServer', 'SyncApiPublisher']
 
 
-class SyncAPIError(StructuredError):
+class SyncApiError(Error):
     """Sync API error."""
 
 
@@ -108,9 +111,9 @@ def dump_vector(vector):
     return vec
 
 
-class SyncAPIClient(object):
+class SyncApiClient(object):
     """
-    SyncAPI client.
+    SyncApi client.
 
     This classs implements a client to the Bluepass HTTP based synchronization
     API. The two main functions are pairing (pair_step1() and pair_step2())
@@ -173,7 +176,7 @@ class SyncAPIClient(object):
             connection.connect(address, ssl=True, **sslargs)
         except gruvi.Error as e:
             self._log.error('could not connect to {}:{}' % address)
-            raise SyncAPIError('RemoteError', 'Could not connect')
+            raise SyncApiError('Could not connect')
         self.address = address
         self.connection = connection
 
@@ -217,52 +220,52 @@ class SyncAPIClient(object):
     def pair_step1(self, uuid, name):
         """Perform step 1 in a pairing exchange.
         
-        If succesful, this returns a key exchange ID. On error, a SyncAPIError
+        If succesful, this returns a key exchange ID. On error, a SyncApiError
         exception is raised.
         """
         if self.connection is None:
-            raise SyncAPIError('ProgrammingError', 'Not connected')
+            raise RuntimeError('Not connected')
         url = '/api/vaults/%s/pair' % uuid
         headers = [('Authorization', 'HMAC_CB name=%s' % name)]
         response = self._make_request('POST', url, headers)
         if response is None:
-            raise SyncAPIError('RemoteError', 'Could not make HTTP request')
+            raise SyncApiError('Could not make HTTP request')
         status = response.status
         if status != 401:
             self._log.error('expecting HTTP status 401 (got: {})', status)
-            raise SyncAPIError('RemoteError', 'HTTP {0}'.format(response.status))
+            raise SyncApiError('HTTP {0}'.format(response.status))
         wwwauth = response.get_header('WWW-Authenticate', '')
         try:
             method, options = parse_option_header(wwwauth)
         except ValueError:
-            raise SyncAPIError('RemoteError', 'Illegal response')
+            raise SyncApiError('Illegal response')
         if method != 'HMAC_CB' or 'kxid' not in options:
             self._log.error('illegal WWW-Authenticate header: {}', wwwauth)
-            raise SyncAPIError('RemoteError', 'Illegal response')
+            raise SyncApiError('Illegal response')
         return options['kxid']
 
     def pair_step2(self, uuid, kxid, pin, certinfo):
         """Perform step 2 in pairing exchange.
         
         If successfull, this returns the peer certificate. On error, a
-        SyncAPIError is raised.
+        SyncApiError is raised.
         """
         if self.connection is None:
-            raise SyncAPIError('ProgrammingError', 'Not connected')
+            raise RuntimeError('Not connected')
         url = '/api/vaults/%s/pair' % uuid
         headers = self._get_hmac_cb_auth(kxid, pin)
         response = self._make_request('POST', url, headers, certinfo)
         if response is None:
-            raise SyncAPIError('RemoteError', 'Could not make syncapi request')
+            raise SyncApiError('Could not make syncapi request')
         status = response.status
         if status != 200:
             self._log.error('expecting HTTP status 200 (got: {})', status)
-            raise SyncAPIError('RemoteError', 'HTTP status {0}'.format(response.status))
+            raise SyncApiError('HTTP status {0}'.format(response.status))
         if not self._check_hmac_cb_auth(response, pin):
-            raise SyncAPIError('RemoteError', 'Illegal syncapi response')
+            raise SyncApiError('Illegal syncapi response')
         peercert = response.entity
         if peercert is None or not isinstance(peercert, dict):
-            raise SyncAPIError('RemoteError', 'Illegal syncapi response')
+            raise SyncApiError('Illegal syncapi response')
         return peercert
 
     def _get_rsa_cb_auth(self, uuid, model):
@@ -309,26 +312,26 @@ class SyncAPIClient(object):
     def sync(self, uuid, model, notify=True):
         """Synchronize vault `uuid` with the remote peer."""
         if self.connection is None:
-            raise SyncAPIError('ProgrammingError', 'Not connected')
+            raise RuntimeError('Not connected')
         vault = model.get_vault(uuid)
         if vault is None:
-            raise SyncAPIError('NotFound', 'Vault not found')
+            raise SyncApiError('Vault not found')
         vector = model.get_vector(uuid)
         vector = dump_vector(vector)
         url = '/api/vaults/%s/items?vector=%s' % (vault['id'], vector)
         headers = self._get_rsa_cb_auth(uuid, model)
         response = self._make_request('GET', url, headers)
         if not response:
-            raise SyncAPIError('RemoteError', 'Could not make HTTP request')
+            raise SyncApiError('Could not make HTTP request')
         status = response.status
         if status != 200:
             self._log.error('expecting HTTP status 200 (got: {})', status)
-            raise SyncAPIError('RemoteError', 'Illegal syncapi response')
+            raise SyncApiError('Illegal syncapi response')
         if not self._check_rsa_cb_auth(uuid, response, model):
-            raise SyncAPIError('RemoteError', 'Illegal syncapi response')
+            raise SyncApiError('Illegal syncapi response')
         initems = response.entity
         if initems is None or not isinstance(initems, list):
-            raise SyncAPIError('RemoteError', 'Illegal syncapi response')
+            raise SyncApiError('Illegal syncapi response')
         nitems = model.import_items(uuid, initems, notify=notify)
         self._log.debug('imported {} items into model', nitems)
         vector = response.get_header('X-Vector', '')
@@ -336,17 +339,17 @@ class SyncAPIClient(object):
             vector = parse_vector(vector)
         except ValueError as e:
             self._log.error('illegal X-Vector header: {} ({})', vector, str(e))
-            raise SyncAPIError('RemoteError', 'Invalid response')
+            raise SyncApiError('Invalid response')
         outitems = model.get_items(uuid, vector)
         url = '/api/vaults/%s/items' % uuid
         response = self._make_request('POST', url, headers, outitems)
         if not response:
-            raise SyncAPIError('RemoteError', 'Illegal syncapi response')
+            raise SyncApiError('Illegal syncapi response')
         if status != 200:
             self._log.error('expecting HTTP status 200 (got: {})', status)
-            raise SyncAPIError('RemoteError', 'Illegal syncapi response')
+            raise SyncApiError('Illegal syncapi response')
         if not self._check_rsa_cb_auth(uuid, response, model):
-            raise SyncAPIError('RemoteError', 'Illegal syncapi response')
+            raise SyncApiError('Illegal syncapi response')
         self._log.debug('succesfully retrieved {} items from peer', len(initems))
         self._log.debug('succesfully pushed {} items to peer', len(outitems))
         return len(initems) + len(outitems)
@@ -469,11 +472,11 @@ class WSGIApplication(object):
         return [status]
 
 
-class SyncAPIApplication(WSGIApplication):
-    """A WSGI application that implements our SyncAPI."""
+class SyncApiApplication(WSGIApplication):
+    """A WSGI application that implements our SyncApi."""
 
     def __init__(self):
-        super(SyncAPIApplication, self).__init__()
+        super(SyncApiApplication, self).__init__()
         self.allow_pairing = False
         self.key_exchanges = {}
 
@@ -495,11 +498,14 @@ class SyncAPIApplication(WSGIApplication):
             name = options['name']
             if not self.allow_pairing:
                 raise HTTPReturn('403 Pairing Disabled')
-            from bluepass.socketapi import SocketAPIServer
-            bus = instance(SocketAPIServer)
-            kxid = crypto.random_token(128)
+            from bluepass.ctrlapi import ControlApiServer
+            bus = instance(ControlApiServer)
+            kxid = crypto.random_cookie()
             pin = '{0:06d}'.format(crypto.random_int(1000000))
             for client in bus.clients:
+                # XXX: revise this
+                if not getattr(client, '_ctrlapi_authenticated', False):
+                    continue
                 approved = bus.call_method(client, 'get_pairing_approval',
                                            name, uuid, pin, kxid)
                 break
@@ -526,8 +532,8 @@ class SyncAPIApplication(WSGIApplication):
             check = crypto.hmac(adjust_pin(pin, +1).encode('ascii'), cb, 'sha1')
             if check != signature:
                 raise HTTPReturn('403 Invalid PIN')
-            from bluepass.socketapi import SocketAPIServer
-            bus = instance(SocketAPIServer)
+            from bluepass.ctrlapi import ControlApiServer
+            bus = instance(ControlApiServer)
             for client in bus.clients:
                 bus.send_notification(client, 'PairingComplete', kxid)
             # Prove to the other side we also know the PIN
@@ -635,15 +641,15 @@ class SyncAPIApplication(WSGIApplication):
         model.import_items(uuid, items)
 
 
-class SyncAPIServer(HttpServer):
+class SyncApiServer(HttpServer):
     """The WSGI server that runs the syncapi."""
 
     def __init__(self):
-        handler = singleton(SyncAPIApplication)
-        super(SyncAPIServer, self).__init__(handler)
+        handler = singleton(SyncApiApplication)
+        super(SyncApiServer, self).__init__(handler)
 
     def _get_environ(self, transport, message):
-        env = super(SyncAPIServer, self)._get_environ(transport, message)
+        env = super(SyncApiServer, self)._get_environ(transport, message)
         env['SSL_CIPHER'] = transport.ssl.cipher()
         cb = transport.ssl.get_channel_binding('tls-unique')
         env['SSL_CHANNEL_BINDING_TLS_UNIQUE'] = cb
@@ -658,10 +664,10 @@ class SyncAPIServer(HttpServer):
             sslargs = {'context': context}
         else:
             sslargs = {'ciphers': 'ADH+AES', 'dh_params': dhparams}
-        super(SyncAPIServer, self).listen(address, ssl=True, **sslargs)
+        super(SyncApiServer, self).listen(address, ssl=True, **sslargs)
 
 
-class SyncAPIPublisher(Fiber):
+class SyncApiPublisher(Fiber):
     """Sync API publisher.
 
     The Publisher is responsible for publising the location of our syncapi
@@ -672,7 +678,7 @@ class SyncAPIPublisher(Fiber):
     """
 
     def __init__(self, server):
-        super(SyncAPIPublisher, self).__init__(target=self._run)
+        super(SyncApiPublisher, self).__init__(target=self._run)
         self.server = server
         self.queue = gruvi.Queue()
         self.published_nodes = set()
@@ -738,7 +744,7 @@ class SyncAPIPublisher(Fiber):
                         for node in self.published_nodes:
                             locator.set_property(node, 'visible', 'true')
                             log.debug('make node {} visible', node)
-                        instance(SyncAPIApplication).allow_pairing = True
+                        instance(SyncApiApplication).allow_pairing = True
                         self.raise_event('AllowPairingStarted', timeout)
                     else:
                         self.allow_pairing = False
@@ -746,7 +752,7 @@ class SyncAPIPublisher(Fiber):
                         for node in self.published_nodes:
                             locator.set_property(node, 'visible', 'false')
                             log.debug('make node {} invisible (user)', node)
-                        instance(SyncAPIApplication).allow_pairing = False
+                        instance(SyncApiApplication).allow_pairing = False
                         self.raise_event('AllowPairingEnded')
                 elif event == 'VaultAdded':
                     vault = args[0]
@@ -780,7 +786,7 @@ class SyncAPIPublisher(Fiber):
                     log.debug('make node {} invisible (timeout)', node)
                 self.allow_pairing = False
                 self.allow_pairing_until = None
-                instance(SyncAPIApplication).allow_pairing = False
+                instance(SyncApiApplication).allow_pairing = False
                 self.raise_event('AllowPairingEnded')
             log.debug('done processing event')
         log.debug('shutting down publisher')

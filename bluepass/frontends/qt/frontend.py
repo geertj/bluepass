@@ -15,7 +15,7 @@ from bluepass.factory import singleton
 from bluepass.component import Component
 
 from .application import Bluepass
-from .socketapi import QtSocketApiClient
+from .ctrlapi import ControlApiClient
 
 
 class QtFrontend(Component):
@@ -39,7 +39,8 @@ class QtFrontend(Component):
         app = singleton(Bluepass, args)
 
         addr = util.paddr(self.options.connect)
-        socketapi = singleton(QtSocketApiClient)
-        socketapi.connect(addr)
+        ctrlapi = singleton(ControlApiClient)
+        ctrlapi.connect(addr)
+        ctrlapi.login(self.options.auth_token)
 
         return app.exec_()

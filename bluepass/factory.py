@@ -13,13 +13,13 @@ __all__ = ['instance', 'singleton']
 
 def instance(cls):
     """Return the singleton instance of a type."""
-    if not hasattr(cls, 'instance'):
+    if not hasattr(cls, '_bp_instance'):
         raise RuntimeError('Not yet instantiated.')
-    return cls.instance
+    return cls._bp_instance
 
 def singleton(cls, *args, **kwargs):
     """Create a singleton class instance."""
-    if hasattr(cls, 'instance'):
+    if hasattr(cls, '_bp_instance'):
         raise RuntimeError('Already instantiated.')
-    cls.instance = cls(*args, **kwargs)
-    return cls.instance
+    cls._bp_instance = cls(*args, **kwargs)
+    return cls._bp_instance

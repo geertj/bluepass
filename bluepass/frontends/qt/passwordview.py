@@ -21,7 +21,7 @@ from bluepass import logging
 from bluepass.util import asset
 
 from .util import SortedList
-from .socketapi import QtSocketApiError
+from .ctrlapi import ControlApiError
 from .dialogs import EditPasswordDialog
 
 
@@ -193,7 +193,7 @@ class UnlockVaultWidget(QFrame):
         unlock_others = self.unlockcb.isChecked()
         try:
             success = backend.unlock_vault(self.vault, password)
-        except QtSocketApiError as e:
+        except ControlApiError as e:
             status = '<i>Could not unlock vault: %s</i>' % e.error_message
             self.setStatus(status)
             return
@@ -211,7 +211,7 @@ class UnlockVaultWidget(QFrame):
                 continue
             try:
                 backend.unlock_vault(uuid, password)
-            except QtSocketApiError:
+            except ControlApiError:
                 pass
             else:
                 count += 1

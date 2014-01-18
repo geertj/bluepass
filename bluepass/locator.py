@@ -6,12 +6,15 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
-from bluepass import logging
-from bluepass.error import Error
+from __future__ import absolute_import, print_function
+
+from . import logging, errors
+
+__all__ = ['LocationError', 'LocationSource', 'ZeroconfLocationSource', 'Locator']
 
 
-class LocationError(Error):
-    pass
+class LocationError(errors.Error):
+    """Location error."""
 
 
 class LocationSource(object):

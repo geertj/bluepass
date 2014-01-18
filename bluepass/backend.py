@@ -15,15 +15,15 @@ import six
 import gruvi
 
 from bluepass import platform, util, logging
-from bluepass.factory import singleton
-from bluepass.component import Component
-from bluepass.database import Database
-from bluepass.model import Model
-from bluepass.passwords import PasswordGenerator
-from bluepass.locator import Locator, ZeroconfLocationSource
-from bluepass.socketapi import SocketAPIServer
-from bluepass.syncapi import SyncAPIServer, SyncAPIPublisher
-from bluepass.syncer import Syncer
+from .factory import *
+from .component import Component
+from .database import Database
+from .model import Model
+from .passwords import PasswordGenerator
+from .locator import Locator
+from .ctrlapi import ControlApiServer
+from .syncapi import SyncApiServer, SyncApiPublisher
+from .syncer import Syncer
 
 
 def get_listen_address(options):
@@ -80,6 +80,9 @@ class Backend(Component):
 
         self._log.debug('initializing model')
         model = singleton(Model, database)
+        token = {'id': self.options.auth_token, 'expires': 0,
+                 'rights': {'control_api': True}}
+        model.add_token(token, ephemeral=True)
 
         self._log.debug('initializing locator')
         locator = singleton(Locator)
@@ -88,11 +91,11 @@ class Backend(Component):
             locator.add_source(ls())
 
         self._log.debug('initializing sync API')
-        syncapi = singleton(SyncAPIServer)
+        syncapi = singleton(SyncApiServer)
         syncapi.listen(('0.0.0.0', 0))
 
         self._log.debug('initializing sync API publisher')
-        publisher = singleton(SyncAPIPublisher, syncapi)
+        publisher = singleton(SyncApiPublisher, syncapi)
         publisher.start()
 
         if locator.sources:
@@ -104,16 +107,16 @@ class Backend(Component):
             self._log.warning('network synchronization is disabled')
 
         self._log.debug('initializing control API')
-        socketapi = singleton(SocketAPIServer)
+        ctrlapi = singleton(ControlApiServer)
         if self.options.trace:
             tracename = os.path.join(self.options.data_dir, 'backend.trace')
             tracefile = open(tracename, 'w')
-            socketapi._set_tracefile(tracefile)
+            ctrlapi.set_tracefile(tracefile)
         addr = gruvi.util.paddr(self.options.listen)
-        socketapi.listen(addr)
+        ctrlapi.listen(addr)
 
         fname = os.path.join(self.options.data_dir, 'backend.run')
-        addr = gruvi.util.getsockname(socketapi.transport)
+        addr = gruvi.util.getsockname(ctrlapi.transport)
         runinfo = { 'listen': gruvi.util.saddr(addr), 'pid': os.getpid() }
         util.write_atomic(fname, json.dumps(runinfo))
 
@@ -127,7 +130,7 @@ class Backend(Component):
         self._log.debug('backend event loop terminated')
 
         self._log.debug('shutting down control API')
-        socketapi.close()
+        ctrlapi.close()
 
         self._log.debug('shutting down database')
         database.close()

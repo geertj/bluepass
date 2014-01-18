@@ -572,15 +572,15 @@ class CreateVault(Page):
         else:
             self.showPopup('<i>Creating vault. This may take a few seconds.</i>',
                            minimum_show=2000, progress=100)
-            self.uuid = backend.create_vault(name, password, async=True)
+            self.uuid = backend.create_vault(name, password)
 
-    @Slot(str, str, dict)
+    @Slot(str, bool, dict)
     def vaultCreationComplete(self, uuid, status, detail):
         """Signal that arrives when the asynchronous vault creation
         has completed."""
         if uuid != self.uuid:
             return
-        if status == 'OK':
+        if status:
             if self.name == 'NewVaultSimplified':
                 mainwindow = QApplication.instance().mainWindow()
                 mainwindow.showMessage('The vault was successfully created.')
@@ -599,11 +599,11 @@ class CreateVault(Page):
         self.createbtn.setEnabled(True)
         self.uuid = None
 
-    @Slot(str, str, dict)
+    @Slot(str, bool, dict)
     def pairNeighborStep2Completed(self, cookie, status, detail):
         if cookie != self.cookie:
             return
-        if status == 'OK':
+        if status:
             self.done()
         else:
             self.showPopup('<i>Error: %s</i>' % detail['data'],
@@ -785,11 +785,11 @@ class ShowNeighbors(Page):
         self.cookie = backend.pair_neighbor_step1(node, source)
         self.vault = vault
 
-    @Slot(str, str, dict)
+    @Slot(str, bool, dict)
     def pairNeighborStep1Completed(self, cookie, status, detail):
         if cookie != self.cookie:
             return
-        if status == 'OK':
+        if status:
             self.hidePopup()
             vaultmgr = QApplication.instance().mainWindow().vaultManager()
             page = vaultmgr.page('ConnectVault')

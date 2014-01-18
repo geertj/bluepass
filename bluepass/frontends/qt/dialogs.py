@@ -15,7 +15,7 @@ from PyQt4.QtGui import (QDialog, QLineEdit, QTextEdit, QComboBox, QLabel,
 
 from bluepass.util import asset
 from .util import SortedList
-from .socketapi import QtSocketApiError
+from .ctrlapi import ControlApiError
 from .passwordbutton import GeneratePasswordButton, RandomPasswordConfiguration
 
 
@@ -184,14 +184,14 @@ class EditPasswordDialog(QDialog):
         if version.get('id'):
             try:
                 backend.update_version(self.vault, version)
-            except QtSocketApiError as e:
+            except ControlApiError as e:
                 mainwindow.showMessage('Could not update password: %s' % str(e))
             else:
                 mainwindow.showMessage('Password updated successfully')
         else:
             try:
                 backend.add_version(self.vault, version)
-            except QtSocketApiError as e:
+            except ControlApiError as e:
                 mainwindow.showMessage('Could not add password: %s' % str(e))
             else:
                 mainwindow.showMessage('Password added successfully')

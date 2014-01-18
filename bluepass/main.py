@@ -18,8 +18,10 @@ import argparse
 import subprocess
 import binascii
 
+from gruvi import jsonrpc
+
 import bluepass
-from bluepass import platform, util, logging
+from bluepass import platform, util, logging, crypto
 from bluepass.factory import singleton
 from bluepass.backend import Backend
 
@@ -41,8 +43,8 @@ def create_parser():
                         help='Log to stdout even if not on a tty')
     parser.add_argument('--data-dir', metavar='DIRECTORY',
                         help='Specify data directory')
-    parser.add_argument('--auth-token', metavar='TOKEN',
-                        help='Backend authentication token')
+    parser.add_argument('--auth-token', metavar='TOKEN-ID',
+                        help='Backend authentication token ID')
     parser.add_argument('--daemon', action='store_true',
                         help='Do not kill backend on exit')
     parser.add_argument('--list-frontends', action='store_true',
@@ -62,13 +64,16 @@ def stop_backend(options, process, sock):
     # Try to stop our child. First nicely, then progressively less nice.
     start_time = time.time()
     elapsed = 0
+    stop_sent = False
     while elapsed < 3*options.timeout:
-        if sock:
+        if not stop_sent:
             log.debug('sending "stop" command to backend')
-            request = { 'id': 'main.1', 'method': 'stop', 'jsonrpc': '2.0' }
+            request = jsonrpc.create_request('login', (options.auth_token,))
             sock.send(json.dumps(request).encode('ascii'))
-            sock.close()
-            sock = None
+            request = jsonrpc.create_request('stop')
+            sock.send(json.dumps(request).encode('ascii'))
+            sock.shutdown(socket.SHUT_WR)
+            stop_sent = True
         elif elapsed > options.timeout:
             log.debug('calling terminate() on backend')
             process.terminate()
@@ -81,12 +86,13 @@ def stop_backend(options, process, sock):
         elapsed = time.time() - start_time
     exitstatus = process.returncode
     if exitstatus is None:
-        log.error('could not stop backend after {} seconds', elapsed)
+        log.error('could not stop backend after {:.2} seconds', elapsed)
         return False
     elif exitstatus:
         log.error('backend exited with status {}', exitstatus)
     else:
-        log.debug('backend exited after {} seconds', elapsed)
+        log.debug('backend exited after {:.2} seconds', elapsed)
+    sock.close()
     return True
 
 def connect_backend(options):
@@ -110,16 +116,12 @@ def connect_backend(options):
             if e.errno and e.errno not in (errno.ENOENT, errno.ECONNREFUSED):
                 raise
         else:
+            elapsed = time.time() - start_time
             break
         time.sleep(0.1)
         elapsed = time.time() - start_time
-    log.debug('backed started up in {} seconds', elapsed)
+    log.debug('backed started up in {:.2} seconds', elapsed)
     return sock, runinfo
-
-
-def create_auth_token():
-    """Return a new auth token."""
-    return binascii.hexlify(os.urandom(32)).decode('ascii')
 
 
 def main():
@@ -182,10 +184,9 @@ def main():
     startbe = not (options.connect or options.run_backend)
     if options.auth_token is None:
         if not startbe:
-            print('Error: --auth-token or $BLUEPASS_AUTH_TOKEN is required',
-                        file=sys.stderr)
+            print('Error: --auth-token or $BLUEPASS_AUTH_TOKEN is required', file=sys.stderr)
             return 1
-        options.auth_token = create_auth_token()
+        options.auth_token = crypto.random_cookie()
         os.environ['BLUEPASS_AUTH_TOKEN'] = options.auth_token
 
     global log
@@ -204,13 +205,13 @@ def main():
     if options.run_backend:
         logging.set_default_logger('backend')
         backend = singleton(Backend, options)
-        ret = backend.run()
-    else:
-        logging.set_default_logger('frontend.{0}'.format(fe.name))
-        frontend = singleton(Frontend, options)
-        ret = frontend.run()
+        return backend.run()
 
-    # Back from frontend or backend.
+    logging.set_default_logger('frontends.{0}'.format(fe.name))
+    frontend = singleton(Frontend, options)
+    ret = frontend.run()
+
+    # Back from frontend
 
     if startbe and not options.daemon:
         stop_backend(options, process, sock)

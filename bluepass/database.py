@@ -14,7 +14,7 @@ import sqlite3
 import logging
 from datetime import datetime
 
-from bluepass.error import StructuredError
+from bluepass.errors import *
 from bluepass import platform
 
 
@@ -33,7 +33,7 @@ def get_json_value(doc, path):
     return _get_json_value(obj, path)
 
 
-class DatabaseError(StructuredError):
+class DatabaseError(Error):
     """Database error."""
 
 
@@ -58,7 +58,7 @@ class Database(object):
     def open(self, fname):
         """Open the database if it is not opened yet."""
         if self.filename is not None:
-            raise DatabaseError('ProgrammingError', 'Database already opened.')
+            raise RuntimeError('Database already opened.')
         self.connection = sqlite3.connect(fname, **self.sqlite_args)
         self.connection.create_function('get_json_value', 2, get_json_value)
         self.filename = fname
@@ -71,7 +71,7 @@ class Database(object):
     def _commit(self, cursor):
         """Commit and close a cursor."""
         if cursor.connection is not self.connection:
-            raise DatabaseError('ProgrammingError', 'cursor does not belong to this store')
+            raise RuntimeError('Cursor does not belong to this store')
         self.connection.commit()
         cursor.close()
 
@@ -117,9 +117,9 @@ class Database(object):
             self._lock = platform.lock_file(lockname)
         except platform.LockError as e:
             msg = 'Database is locked by process %d (%s)' % (e.lock_pid, e.lock_cmd)
-            raise DatabaseError('Locked', msg)
+            raise DatabaseError(msg)
         except Exception as e:
-            raise DatabaseError('PlatformError', str(e))
+            raise DatabaseError(str(e))
 
     def unlock(self):
         """Unlock the database."""
