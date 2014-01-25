@@ -28,11 +28,12 @@ import gruvi
 from gruvi import Fiber, compat, util
 from gruvi.http import HttpServer, HttpClient
 
-from bluepass import _version, json, base64, uuid4, util, logging, crypto
-from bluepass.errors import *
-from bluepass.factory import instance, singleton
-from bluepass.model import Model
-from bluepass.locator import Locator
+from . import _version, json, base64, uuid4, util, logging, crypto
+from .errors import *
+from .factory import instance, singleton
+from .model import Model
+from .locator import Locator
+from ._version import version_info
 
 __all__ = ['SyncApiError', 'SyncApiClient', 'SyncApiApplication',
            'SyncApiServer', 'SyncApiPublisher']
@@ -132,7 +133,8 @@ class SyncApiClient(object):
         This returns the HTTPResponse object on success, or None on failure.
         """
         headers = [] if headers is None else headers[:]
-        headers.append(('User-Agent', 'Bluepass/%s' % _version.__version__))
+        agent = '{0}/{1}'.format(version_info['name'].title(), version_info['version'])
+        headers.append(('User-Agent', agent))
         headers.append(('Accept', 'text/json'))
         if body is None:
             body = b''
@@ -597,6 +599,7 @@ class SyncApiApplication(WSGIApplication):
         # And send our own certificate request in return
         certinfo = { 'node': vault['node'], 'name': socket.gethostname() }
         certkeys = certinfo['keys'] = {}
+        vault = model.vaults[vault['id']]  # access 'keys'
         for key in vault['keys']:
             certkeys[key] = { 'key': vault['keys'][key]['public'],
                               'keytype': vault['keys'][key]['keytype'] }

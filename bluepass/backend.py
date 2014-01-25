@@ -22,6 +22,7 @@ from .model import Model
 from .passwords import PasswordGenerator
 from .locator import Locator
 from .ctrlapi import ControlApiServer
+from .clientapi import ClientApiServer
 from .syncapi import SyncApiServer, SyncApiPublisher
 from .syncer import Syncer
 
@@ -82,7 +83,7 @@ class Backend(Component):
         model = singleton(Model, database)
         token = {'id': self.options.auth_token, 'expires': 0,
                  'rights': {'control_api': True}}
-        model.add_token(token, ephemeral=True)
+        model.add_token(token)
 
         self._log.debug('initializing locator')
         locator = singleton(Locator)
@@ -119,6 +120,10 @@ class Backend(Component):
         addr = gruvi.util.getsockname(ctrlapi.transport)
         runinfo = { 'listen': gruvi.util.saddr(addr), 'pid': os.getpid() }
         util.write_atomic(fname, json.dumps(runinfo))
+
+        self._log.debug('initializing client API')
+        clientapi = singleton(ClientApiServer)
+        clientapi.listen()
 
         # This is where the backend runs (until stop_event is raised or CTRL-C
         # is pressed).

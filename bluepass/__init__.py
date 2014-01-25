@@ -7,5 +7,3 @@
 # licensing terms.
 
 from __future__ import absolute_import, print_function
-
-from ._version import __version__

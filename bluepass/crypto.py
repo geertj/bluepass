@@ -11,7 +11,9 @@ import time
 import random
 import hashlib
 import uuid
+import string
 import hmac as hmaclib
+import math
 
 from bluepass import logging, base64
 from bluepass.ext.openssl import *
@@ -60,10 +62,13 @@ def random_uuid():
     """Return a type-4 random UUID."""
     return str(uuid.uuid4())
 
-def random_cookie(bits=256):
-    """Return a random string token with at least *bits* of entropy."""
-    size = (bits + 7) // 8
-    return base64.encode(random_bytes(size))
+_cookie_chars = string.ascii_uppercase + string.ascii_lowercase + string.digits
+_bits_per_cookie_char = math.log(len(_cookie_chars), 2)
+
+def random_cookie(bits=128):
+    """Return a cookie with at least *bits* of entropy."""
+    nchars = int(bits/_bits_per_cookie_char + 1)
+    return ''.join([random_element(_cookie_chars) for i in range(nchars)])
 
 def random_element(elements):
     """Return a random element from *elements*."""

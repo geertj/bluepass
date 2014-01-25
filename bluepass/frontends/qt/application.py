@@ -31,6 +31,11 @@ class Bluepass(QApplication):
         self.setWindowIcon(icon)
 
     def exec_(self):
+        ctrlapi = instance(ControlApiClient)
+        config = ctrlapi.get_config('qt')
+        if config is None:
+            config = ctrlapi.create_config({'name': 'qt'})
+        self._config = config
         mainwindow = singleton(MainWindow)
         mainwindow.show()
         return super(Bluepass, self).exec_()

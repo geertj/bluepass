@@ -183,7 +183,7 @@ class EditPasswordDialog(QDialog):
         mainwindow = qapp.mainWindow()
         if version.get('id'):
             try:
-                backend.update_version(self.vault, version)
+                backend.replace_version(self.vault, version)
             except ControlApiError as e:
                 mainwindow.showMessage('Could not update password: %s' % str(e))
             else:
@@ -222,9 +222,9 @@ class PairingApprovalDialog(QDialog):
         grid = QGridLayout()
         grid.setColumnMinimumWidth(1, 10)
         layout.addLayout(grid)
-        namelbl = QLabel('Name', self)
-        grid.addWidget(namelbl, 0, 0)
-        self.namelbl = namelbl
+        pidlbl = QLabel('Name', self)
+        grid.addWidget(pidlbl, 0, 0)
+        self.pidlbl = pidlbl
         nameedt = QLineEdit(self)
         nameedt.setFocusPolicy(Qt.NoFocus)
         grid.addWidget(nameedt, 0, 2)
@@ -263,7 +263,7 @@ class PairingApprovalDialog(QDialog):
         preamble = '<p>A remote node wants to connect to one of ' \
                    'your vaults. Do you want to proceed?</p>'
         self.preamble.setText(preamble)
-        self.namelbl.show()
+        self.pidlbl.show()
         self.nameedt.show()
         self.vaultlbl.show()
         self.vaultedt.show()
@@ -294,7 +294,7 @@ class PairingApprovalDialog(QDialog):
         self.send_response(True)
         preamble = '<p>Enter the PIN code below in the remote device.</p>'
         self.preamble.setText(preamble)
-        self.namelbl.hide()
+        self.pidlbl.hide()
         self.nameedt.hide()
         self.vaultlbl.hide()
         self.vaultedt.hide()
@@ -304,3 +304,81 @@ class PairingApprovalDialog(QDialog):
     def pairingComplete(self, kxid):
         if kxid == self.kxid:
             self.hide()
+
+
+class ApproveClientDialog(QDialog):
+
+    stylesheet = ''
+
+    def __init__(self, parent=None):
+        super(ApproveClientDialog, self).__init__(parent)
+        self.addWidgets()
+        self.setStyleSheet(self.stylesheet)
+        self.resize(400, 300)
+
+    def addWidgets(self):
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+        preamble = QLabel(self)
+        preamble.setWordWrap(True)
+        layout.addWidget(preamble)
+        self.preamble = preamble
+        grid = QGridLayout()
+        grid.setColumnMinimumWidth(1, 10)
+        layout.addLayout(grid)
+        pidlbl = QLabel('Pid', self)
+        grid.addWidget(pidlbl, 0, 0)
+        self.pidlbl = pidlbl
+        pidedt = QLineEdit(self)
+        pidedt.setFocusPolicy(Qt.NoFocus)
+        grid.addWidget(pidedt, 0, 2)
+        self.pidedt = pidedt
+        cmdlbl = QLabel('Command', self)
+        grid.addWidget(cmdlbl, 1, 0)
+        self.cmdlbl = cmdlbl
+        cmdedit = QLineEdit(self)
+        cmdedit.setFocusPolicy(Qt.NoFocus)
+        grid.addWidget(cmdedit, 1, 2)
+        self.cmdedit = cmdedit
+        hbox = QHBoxLayout(self)
+        layout.addLayout(hbox)
+        hbox.addStretch(100)
+        cancelbtn = QPushButton('Deny', self)
+        cancelbtn.clicked.connect(self.denyApproval)
+        hbox.addWidget(cancelbtn)
+        self.cancelbtn = cancelbtn
+        approvebtn = QPushButton('Allow', self)
+        approvebtn.clicked.connect(self.grantApproval)
+        hbox.addWidget(approvebtn)
+        self.approvebtn = approvebtn
+        hbox.addStretch(100)
+
+    def reset(self):
+        preamble = '<p>An application wants to use the client API. ' \
+                   'Do you want to proceed?</p>'
+        self.preamble.setText(preamble)
+        self.pidlbl.show()
+        self.pidedt.show()
+        self.cmdlbl.show()
+        self.cmdedit.show()
+
+    def getApproval(self, info, send_response):
+        backend = QApplication.instance().backend()
+        self.pidedt.setText(str(info['pid']))
+        self.cmdedit.setText(info['executable'])
+        self.send_response = send_response
+        self.show()
+
+    @Slot()
+    def denyApproval(self):
+        self.send_response(False)
+        mainwindow = QApplication.instance().mainWindow()
+        mainwindow.showMessage('Denied connection request')
+        self.hide()
+
+    @Slot()
+    def grantApproval(self):
+        self.send_response(True)
+        mainwindow = QApplication.instance().mainWindow()
+        mainwindow.showMessage('Approved connection request')
+        self.hide()

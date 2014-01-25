@@ -12,6 +12,7 @@ import os
 import stat
 import errno
 import socket
+import hashlib
 
 from gruvi import compat
 import gruvi.util
@@ -34,6 +35,20 @@ def asset(*path):
     if st is None or not stat.S_ISREG(st.st_mode):
         raise RuntimeError('asset {} not found'.format('/'.join(path)))
     return asset
+
+
+def file_checksum(fname, method='sha256'):
+    """Return the checksum of a file named *fname*, using the hash *method*."""
+    if not hasattr(hashlib, method):
+        raise ValueError('unknown method: {0}'.format(method))
+    digest = getattr(hashlib, method)()
+    with open(fname, 'rb') as fin:
+        while True:
+            block = fin.read(4096)
+            if not block:
+                break
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def gethostname():

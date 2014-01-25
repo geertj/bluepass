@@ -17,7 +17,7 @@ def dumps_c14n(obj):
 
 def dumps_pretty(obj):
     """Pretty-print a JSON message."""
-    return dumps(obj, sort_keys=True, indent=2)
+    return dumps(obj, sort_keys=True, indent=2) + '\n'
 
 
 def try_loads(s, cls=None):
@@ -25,8 +25,6 @@ def try_loads(s, cls=None):
     try:
         obj = loads(s)
     except Exception as e:
-        print(repr(s))
-        raise
         return
     if cls is not None and not isinstance(obj, cls):
         return

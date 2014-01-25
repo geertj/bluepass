@@ -15,6 +15,7 @@ import six
 
 from collections import namedtuple
 from .parsing import *
+from .errors import *
 
 __all__ = ['compile', 'match', 'validate']
 
@@ -36,22 +37,22 @@ def add_error(e, p, msg, *args):
 
 def as_int(val, p, e=None):
     if not isinstance(val, int):
-        return add_error(e, p, 'expecting int, got {0!s}', type(val))
+        return add_error(e, p, 'expecting int, got {0.__name__!r}', type(val))
     return val
 
 def as_float(val, p, e=None):
     if not isinstance(val, float):
-        return add_error(e, p, 'expecting float, got {0!s}', type(val))
+        return add_error(e, p, 'expecting float, got {0.__name__!r}', type(val))
     return val
 
 def as_bool(val, p, e=None):
     if not isinstance(val, bool):
-        return add_error(e, p, 'expecting bool, got {0!s}', type(val))
+        return add_error(e, p, 'expecting bool, got {0.__name__!r}', type(val))
     return val
 
 def as_str(val, p, e=None):
     if not isinstance(val, six.string_types):
-        return add_error(e, p, 'expecting str, got {0!s}', type(val))
+        return add_error(e, p, 'expecting str, got {0.__name__!r}', type(val))
     return val
 
 _re_uuid = re.compile('^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-'
@@ -59,14 +60,14 @@ _re_uuid = re.compile('^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-'
 
 def as_uuid(val, p, e=None):
     if not isinstance(val, six.string_types):
-        return add_error(e, p, 'expecting str, got {0!s}', type(val))
+        return add_error(e, p, 'expecting str, got {0.__name__!r}', type(val))
     if not _re_uuid.match(val):
         return add_error(e, p, 'illegal uuid: {0}', val)
     return val
 
 def as_base64(val, p, e=None):
     if not isinstance(val, six.string_types):
-        return add_error(e, p, 'expecting str, got {0!s}', type(val))
+        return add_error(e, p, 'expecting str, got {0.__name__!r}', type(val))
     try:
         val = base64.b64decode(val)
     except binascii.Error:
@@ -336,7 +337,7 @@ class Validator(object):
         return Result(self._vfunc(obj, [], errors, all_errors), errors)
 
     def validate_raise(self, obj):
-        vres = self.validate()
+        vres = self.validate(obj)
         if not vres:
             raise ValidationError(vres.errors[0])
 

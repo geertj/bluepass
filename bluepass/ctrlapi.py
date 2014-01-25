@@ -9,10 +9,10 @@
 from __future__ import absolute_import, print_function
 
 import gruvi
-from gruvi import jsonrpc
+from gruvi import jsonrpc, switchpoint
 from gruvi.jsonrpc import JsonRpcServer
 
-from . import _version, util, json, crypto
+from . import util, json, crypto
 from .factory import *
 from .errors import *
 from .model import *
@@ -20,6 +20,7 @@ from .locator import *
 from .passwords import *
 from .syncapi import *
 from .jsonrpc import *
+from ._version import version_info
 
 
 # These exceptions are passed through to API consumers as JSON-RPC error
@@ -109,9 +110,14 @@ class ControlApiHandler(JsonRpcHandler):
 
         The return value is a dictionary with at least the "version" key in it.
         """
-        return {'version': _version.__version__}
+        return {'version': version_info['version']}
 
     # Configuration
+
+    @method('[{...}]')
+    def create_config(self, config):
+        """Create a new configuration document."""
+        return self.model.create_config(config)
 
     @method('[str]')
     def get_config(self, name):
@@ -122,7 +128,7 @@ class ControlApiHandler(JsonRpcHandler):
         """
         return self.model.get_config(name)
 
-    @method('[dict]')
+    @method('[{...}]')
     def update_config(self, config):
         """Update the configuration object."""
         return self.model.update_config(config)
@@ -166,7 +172,7 @@ class ControlApiHandler(JsonRpcHandler):
         """Return an array of all vaults."""
         return self.model.get_vaults()
 
-    @method('[dict]')
+    @method('[{...}]')
     def update_vault(self, uuid, update):
         """Update a vault.
 
@@ -249,7 +255,7 @@ class ControlApiHandler(JsonRpcHandler):
         """
         return self.model.get_versions(vault)
 
-    @method('[uuid, dict]')
+    @method('[uuid, {...}]')
     def add_version(self, vault, version):
         """Add a new version to a vault.
 
@@ -258,17 +264,17 @@ class ControlApiHandler(JsonRpcHandler):
         """
         return self.model.add_version(vault, version)
 
-    @method('[uuid, dict]')
-    def update_version(self, vault, version):
+    @method('[uuid, {...}]')
+    def replace_version(self, vault, version):
         """Update an existing version.
 
         The *version* parameter should be a dictionary. It must have an "id"
         of a version that already exists. The version will become the latest
         version of the specific id.
         """
-        return self.model.update_version(vault, version)
+        return self.model.replace_version(vault, version)
 
-    @method('[uuid, dict]')
+    @method('[uuid, {...}]')
     def delete_version(self, vault, version):
         """Delete a version from a vault.
 
@@ -377,7 +383,7 @@ class ControlApiHandler(JsonRpcHandler):
                     kxid = client.pair_step1(vault, name)
                     self._pairings[cookie] = (kxid, neighbor, addr)
                 except Exception as e:
-                    self._log('exception in step #1 of pairing')
+                    self._log.exception('exception in step #1 of pairing')
                     status = False
                     detail = self.create_error(message, e) or {}
                 else:
@@ -412,6 +418,7 @@ class ControlApiHandler(JsonRpcHandler):
         def complete_pair_neighbor_step2(message, protocol, transport):
             vault = self.model.create_vault(name, password, neighbor['vault'], notify=False)
             certinfo = {'node': vault['node'], 'name': util.gethostname()}
+            vault = self.model.vaults[vault['id']]  # access "keys"
             keys = certinfo['keys'] = {}
             for key in vault['keys']:
                 keys[key] = {'key': vault['keys'][key]['public'],
@@ -423,7 +430,7 @@ class ControlApiHandler(JsonRpcHandler):
                 peercert = client.pair_step2(vault['id'], kxid, pin, certinfo)
                 self.model.add_certificate(vault['id'], peercert)
             except Exception as e:
-                self._log('exception in step #2 of pairing')
+                self._log.exception('exception in step #2 of pairing')
                 status = False
                 detail = self.create_error(message, e) or {}
                 model.delete_vault(vault)
@@ -459,6 +466,14 @@ class ControlApiServer(JsonRpcServer):
 
     def set_tracefile(self, tracefile):
         self._tracefile = tracefile
+
+    @switchpoint
+    def upcall(self, method, *args):
+        for client in self.clients:
+            if not client._ctrlapi_authenticated:
+                continue
+            # XXX: in parallel to all clients. Add timeout
+            return self.call_method(client, method, *args)
 
     def _log_request(self, message):
         if not self._tracefile:

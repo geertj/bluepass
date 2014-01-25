@@ -373,7 +373,7 @@ class PasswordItem(QLabel):
     def deleteItem(self):
         backend = QApplication.instance().backend()
         version = { 'id': self.version['id'], 'name': self.version['name'],
-                    '_type': self.version['_type'] }
+                    'type': self.version['type'] }
         backend.delete_version(self.vault, version)
 
 
@@ -573,10 +573,9 @@ class VaultView(QWidget):
         for version in versions:
             vuuid = version['id']
             key = sortkey(version)
-            present = not version['_envelope'].get('deleted', False)
+            present = not version.get('deleted', False)
             cur_present = vuuid in current_versions
-            cur_deleted = current_versions.get('vuuid', {}) \
-                    .get('_envelope', {}).get('deleted', False)
+            cur_deleted = current_versions.get('vuuid', {}).get('deleted', False)
             if present:
                 if not cur_present:
                     modifications.append((key, 'new', version))
@@ -880,7 +879,7 @@ class VaultView(QWidget):
         vault = self.currentVault()
         current = self.selectedVersion()
         group = current.get('group') if current else ''
-        version = { '_type': 'Password', 'group': group }
+        version = { 'type': 'Password', 'group': group }
         self.editpwdlg.editPassword(vault, version)
 
     @Slot(str, dict)

@@ -42,6 +42,17 @@ class ControlApiHandler(QJsonRpcHandler):
         self.send_response = False
         mainwindow.showPairingApprovalDialog(name, vault, pin, kxid, send_response)
 
+    @request()
+    def approve_client(self, info):
+        message = self.message
+        client = self.client
+        mainwindow = QApplication.instance().mainWindow()
+        def send_response(approved):
+            reply = qjsonrpc.create_response(message, approved)
+            client.send_message(reply)
+        self.send_response = False
+        mainwindow.showApproveClientDialog(info, send_response)
+
 
 class ControlApiClient(QJsonRpcClient):
     """Qt frontend client for the Bluepass control API."""
@@ -79,6 +90,9 @@ class ControlApiClient(QJsonRpcClient):
 
     def get_version_info(self):
         return self.call_method('get_version_info')
+
+    def create_config(self, name):
+        return self.call_method('create_config', name)
 
     def get_config(self, name):
         return self.call_method('get_config', name)
@@ -122,8 +136,8 @@ class ControlApiClient(QJsonRpcClient):
     def add_version(self, vault, version):
         return self.call_method('add_version', vault, version)
 
-    def update_version(self, vault, version):
-        return self.call_method('update_version', vault, version)
+    def replace_version(self, vault, version):
+        return self.call_method('replace_version', vault, version)
 
     def delete_version(self, vault, version):
         return self.call_method('delete_version', vault, version)

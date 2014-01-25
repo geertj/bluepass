@@ -14,7 +14,7 @@ from PyQt4.QtGui import (QLabel, QLineEdit, QIcon, QPixmap, QPushButton,
         QHBoxLayout, QVBoxLayout, QApplication, QMessageBox)
 
 from bluepass.util import asset
-from .dialogs import PairingApprovalDialog
+from .dialogs import PairingApprovalDialog, ApproveClientDialog
 from .passwordview import VaultView
 from .vaultmanager import VaultManager
 from .ctrlapi import ControlApiError
@@ -266,6 +266,7 @@ class MainWindow(QWidget):
         self.setStyleSheet(self.stylesheet)
         self.vaultmgr = VaultManager(self)
         self.pairdlg = PairingApprovalDialog(self)
+        self.clientdlg = ApproveClientDialog(self)
 
     def addWidgets(self):
         layout = QVBoxLayout()
@@ -349,3 +350,7 @@ class MainWindow(QWidget):
     def showPairingApprovalDialog(self, name, vault, pin, kxid, send_response):
         self.pairdlg.reset()
         self.pairdlg.getApproval(name, vault, pin, kxid, send_response)
+
+    def showApproveClientDialog(self, info, send_response):
+        self.clientdlg.reset()
+        self.clientdlg.getApproval(info, send_response)

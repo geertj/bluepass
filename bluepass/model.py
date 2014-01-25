@@ -32,9 +32,11 @@ class InvalidPassword(ModelError):
 
 # Validators for our data model
 
+va_config = validate.compile('{ name: str@>0, ... }')
+
 va_token = validate.compile("""
         { id: str@>=20, expires: int>=0, rights:
-            { control_api: bool*, browser_api: bool* } }
+            { control_api: *bool, client_api: *bool } }
         """)
 
 va_vault = validate.compile("""
@@ -59,36 +61,36 @@ va_vault = validate.compile("""
 va_vault_update = validate.compile('{name: str@>0@<=100}')
 
 va_item = validate.compile("""
-        { id: uuid, _type: str="Item", vault: uuid,
+        { id: uuid, type: str="Item", vault: uuid,
           origin: { node: uuid, seqnr: int>=0 },
-          payload: { _type: str="Certificate"|="EncryptedItem", ... }
+          payload: { type: str="Certificate"|="EncryptedItem", ... }
           signature: { algo: str="rsa-pss-sha256", blob: b64@>=16 } }
         """)
 
 va_cert = validate.compile("""
         { id: uuid, payload:
-            {  id: uuid, _type:str="Certificate", node: uuid, name: str@>0@<=100, keys:
+            {  id: uuid, type:str="Certificate", node: uuid, name: str@>0@<=100, keys:
                 { sign: { key: b64, keytype: str="rsa" },
                   encrypt: { key: b64, keytype: str="rsa" },
                   auth: { key: b64, keytype: str="rsa" } }
-               restrictions: { synconly: bool* } }, ... }
+               restrictions: { synconly: *bool } }, ... }
         """)
 
 va_encitem = validate.compile("""
         { id: uuid, payload:
-            { _type: str="EncryptedItem", algo: str="aes-cbc-pkcs7",
-              iv: b64@>=16 blob: b64@>=2, keyalgo: str="rsa-oaep", keys: dict }, ... }
+            { type: str="EncryptedItem", algo: str="aes-cbc-pkcs7",
+              iv: b64@>=16 blob: b64@>=2, keyalgo: str="rsa-oaep", keys: {...} }, ... }
         """)
 
 # XXX: Check encitems/payload/keys: uuid -> b64
 
 va_decitem = validate.compile("""
-        { id: uuid, payload: { id: uuid, _type: str="Version", ... }, ... }
+        { id: uuid, payload: { id: uuid, type: str="Version", ... }, ... }
         """)
 
 va_version = validate.compile("""
         { id: uuid, payload:
-            { id: uuid, _type: str="Version", parent: uuid*, deleted: bool*,
+            { id: uuid, type: str="Version", parent: *uuid, deleted: *bool,
               created_at: int>=0, version: { id: uuid, ... } }, ... }
         """)
 
@@ -97,8 +99,29 @@ va_certinfo = validate.compile("""
             { sign: { key: b64@>=16, keytype: str="rsa" },
               encrypt: { key: b64@>=16, keytype: str="rsa" },
               auth: { key: b64@>=16, keytype: str="rsa" } }
-          restrictions: { synconly: bool* } }
+          restrictions: { synconly: *bool } }
         """)
+
+
+def filter_dict(d, include=None, exclude=None):
+    """Filter keys from a dict (or list of dicts)."""
+    if d is None:
+        return
+    elif isinstance(d, list):
+        return [filter_dict(elem, include, exclude) for elem in d]
+    res = {}
+    for key in d:
+        if include is not None:
+            if key in include:
+                res[key] = d[key]
+        elif exclude is not None:
+            if key not in exclude:
+                res[key] = d[key]
+    return res
+
+def filter_vault(vault):
+    """Filter unnecessary information from a vault object."""
+    return filter_dict(vault, exclude=('keys',))
 
 
 class Model(object):
@@ -124,8 +147,8 @@ class Model(object):
     def _update_schema(self):
         """Create or update the database schema."""
         db = self.database
-        if 'config' not in db.tables:
-            db.create_table('config')
+        if 'configs' not in db.tables:
+            db.create_table('configs')
         if 'tokens' not in db.tables:
             db.create_table('tokens')
         if 'vaults' not in db.tables:
@@ -135,7 +158,7 @@ class Model(object):
             db.create_index('items', '$vault', 'TEXT', False)
             db.create_index('items', '$origin$node', 'TEXT', False)
             db.create_index('items', '$origin$seqnr', 'INT', False)
-            db.create_index('items', '$payload$_type', 'TEXT', False)
+            db.create_index('items', '$payload$type', 'TEXT', False)
 
     def _load_tokens(self):
         """Load all tokens."""
@@ -163,7 +186,7 @@ class Model(object):
                 self._log.error('Invalid item "{}": {}', uuid, vres.errors[0])
                 errors += 1
                 continue
-            typ = item['payload']['_type']
+            typ = item['payload']['type']
             if typ == 'Certificate':
                 vres = va_cert.validate(item)
                 if not vres:
@@ -276,7 +299,7 @@ class Model(object):
         assert vault in self.vaults
         # Create mapping of certificates by their signer
         certs = {}
-        query = "$vault = ? AND $payload$_type = 'Certificate'"
+        query = "$vault = ? AND $payload$type = 'Certificate'"
         result = self.database.findall('items', query, (vault,))
         for cert in result:
             assert va_item.match(cert)
@@ -396,7 +419,7 @@ class Model(object):
     def _load_versions(self, vault):
         """Load all current versions and their history."""
         versions = []
-        query = "$vault = ? AND $payload$_type = 'EncryptedItem'"
+        query = "$vault = ? AND $payload$type = 'EncryptedItem'"
         items = self.database.findall('items', query, (vault,))
         for item in items:
             if not self._verify_item(vault, item) or \
@@ -446,7 +469,7 @@ class Model(object):
         assert vault in self._private_keys
         clear = item.pop('payload')
         item['payload'] = payload = {}
-        payload['_type'] = 'EncryptedItem'
+        payload['type'] = 'EncryptedItem'
         payload['algo'] = 'aes-cbc-pkcs7'
         iv = crypto.random_bytes(16)
         payload['iv'] = base64.encode(iv)
@@ -512,10 +535,10 @@ class Model(object):
         """Create a new empty item."""
         item = {}
         item['id'] = crypto.random_uuid()
-        item['_type'] = 'Item'
+        item['type'] = 'Item'
         item['vault'] = vault
         item['payload'] = payload = {}
-        payload['_type'] = ptype
+        payload['type'] = ptype
         payload.update(kwargs)
         return item
 
@@ -525,7 +548,7 @@ class Model(object):
         item['payload']['id'] = crypto.random_uuid()
         return item
 
-    def _new_version(self, vault, parent=None, **version):
+    def _new_version(self, vault, version, parent=None):
         """Create a new empty version."""
         item = self._new_item(vault, 'Version')
         payload = item['payload']
@@ -533,15 +556,16 @@ class Model(object):
         payload['created_at'] = int(time.time())
         if parent is not None:
             payload['parent'] = parent
-        payload['version'] = version.copy()
+        payload['version'] = filter_dict(version, exclude=('vault', 'deleted', 'created_at'))
         return item
 
     def _get_version(self, item):
         """Return the version inside an item, with envelope."""
-        payload = item['payload'].copy()
+        payload = item['payload']
         version = payload['version'].copy()
-        del payload['version']
-        version['_envelope'] = payload
+        version['vault'] = item['vault']
+        version['deleted'] = payload.get('deleted', False)
+        version['created_at'] = payload['created_at']
         return version
 
     def _create_vault_key(self, password):
@@ -609,21 +633,42 @@ class Model(object):
 
     # API for a typical GUI consumer
 
-    def get_config(self, name):
-        """Return the configuration document."""
-        config = self.database.findone('config', '$id = ?', (name,))
-        if config is None:
-            config = {'id': name}
-            self.database.insert('config', config)
+    def create_config(self, config):
+        """Create a new configuration."""
+        vres = va_config.validate(config)
+        if vres.error:
+            raise ValidationError('Invalid config: {0}'.format(vres.error))
+        self.database.insert('configs', config)
         return config
 
-    def update_config(self, config):
+    def get_config(self, name):
+        """Return the configuration document."""
+        return self.database.findone('configs', '$name = ?', (name,))
+
+    def get_configs(self):
+        """Return all configurations."""
+        return self.database.findall('configs')
+
+    def update_config(self, update):
         """Update the configuration document."""
-        name = config.get('id')
-        config = self.database.findone('config', '$id = ?', (name,))
+        name = update.get('name')
+        config = self.database.findone('configs', '$name = ?', (name,))
         if config is None:
-            raise NotFound('No such configuration: {0}'.format(name))
-        self.database.update('config', '$id = ?', (name,), config)
+            raise NotFound('No such config: {0}'.format(name))
+        for key,value in update.items():
+            if value is not None:
+                config[key] = value
+            elif key in config:
+                del config[key]
+        self.database.update('configs', '$name = ?', (name,), config)
+        return config
+
+    def delete_config(self, name):
+        """Delete a configuration document."""
+        config = self.database.findone('configs', '$name = ?', (name,))
+        if config is None:
+            raise NotFound('No such config: {0}'.format(name))
+        self.database.delete('configs', '$name = ?', (name,))
 
     # Tokens
 
@@ -631,11 +676,8 @@ class Model(object):
         """Return the authentication token identified by *tokid*."""
         return self._tokens.get(tokid)
 
-    def add_token(self, token, ephemeral=True):
-        """Add the authentication token *token*.
-
-        By default, the token is ephemeral, i.e. not stored in the database.
-        """
+    def add_token(self, token):
+        """Create a new authentication token *token*."""
         if 'id' not in token:
             token['id'] = crypto.random_cookie()
         vres = va_token.validate(token)
@@ -645,8 +687,9 @@ class Model(object):
         if tokid in self._tokens:
             raise ValidationError('Token already exists: {0}'.format(tokid))
         self._tokens[tokid] = token
-        if not ephemeral:
+        if token.get('expires', '0') != '0':
             self.database.insert('tokens', token)
+        return token
 
     def delete_token(self, tokid):
         """Delete the authentication token *tokid*."""
@@ -654,6 +697,18 @@ class Model(object):
             raise NotFound('No such token: {0}'.format(tokid))
         del self._tokens[tokid]
         self.database.delete('tokens', '$id = ?', (tokid,))
+
+    def validate_token(self, tokid, right=None):
+        """Validate a token."""
+        token = self._tokens.get(tokid)
+        if token is None:
+            return False
+        expires = token['expires']
+        if expires and expires < time.time():
+            return False
+        if right and not token['rights'].get(right):
+            return False
+        return True
 
     # Vaults
 
@@ -679,7 +734,6 @@ class Model(object):
         if uuid is None:
             uuid = crypto.random_uuid()
         vault['id'] = uuid
-        vault['_type'] = 'Vault'
         vault['name'] = name
         vault['node'] = crypto.random_uuid()
         keys = self._create_vault_keys(password)
@@ -705,17 +759,18 @@ class Model(object):
         self.import_item(uuid, item, notify=notify)
         if notify:
             self.raise_event('VaultAdded', vault)
-        return vault
+        return filter_vault(vault)
 
     def get_vault(self, uuid):
         """Return the vault with `uuid` or None if there is no such vault."""
         if uuid not in self.vaults:
             return
-        return self.database.findone('vaults', '$id = ?', (uuid,))
+        vault = self.database.findone('vaults', '$id = ?', (uuid,))
+        return filter_vault(vault)
 
     def get_vaults(self):
         """Return a list of all vaults."""
-        return self.database.findall('vaults')
+        return filter_vault(self.database.findall('vaults'))
 
     def update_vault(self, update):
         """Update a vault."""
@@ -730,6 +785,7 @@ class Model(object):
             vault[key] = update
         self.database.update('vaults', '$id = ?', (vault['id'],), vault)
         self.raise_event('VaultUpdated', vault)
+        return filter_vault(vault)
 
     def delete_vault(self, uuid):
         """Delete a vault and all its items."""
@@ -769,13 +825,13 @@ class Model(object):
         stats['total_items'] = result[0]
         result = self.database.execute('items', """
                     SELECT COUNT(*) FROM items WHERE $vault = ?
-                    AND $payload$_type = 'Certificate'
+                    AND $payload$type = 'Certificate'
                     """, (uuid,))
         stats['total_certificates'] = result[0]
         result = self.database.execute('items', """
                     SELECT COUNT(*) FROM
                     (SELECT DISTINCT $payload$node FROM items
-                     WHERE $vault = ? AND $payload$_type = 'Certificate')
+                     WHERE $vault = ? AND $payload$type = 'Certificate')
                     """, (uuid,))
         stats['total_nodes'] = result[0]
         stats['trusted_nodes'] = len(self._trusted_certs[uuid])
@@ -880,7 +936,7 @@ class Model(object):
             raise VaultLocked('Vault {0} is locked'.format(vault))
         assert vault in self._version_cache
         version['id'] = crypto.random_uuid()
-        item = self._new_version(vault, **version)
+        item = self._new_version(vault, version)
         self._encrypt_item(vault, item)
         self._add_origin(vault, item)
         self._sign_item(vault, item)
@@ -888,7 +944,7 @@ class Model(object):
         version = self._get_version(item)
         return version
 
-    def update_version(self, vault, version):
+    def replace_version(self, vault, version):
         """Update an existing version."""
         if vault not in self.vaults:
             raise NotFound('No such vault: {0}'.format(vault))
@@ -900,7 +956,7 @@ class Model(object):
         if uuid not in self._version_cache[vault]:
             raise NotFound('No such version: {0}'.format(uuid))
         parent = self._version_cache[vault][uuid]['payload']['id']
-        item = self._new_version(vault, parent=parent, **version)
+        item = self._new_version(vault, version, parent=parent)
         self._encrypt_item(vault, item)
         self._add_origin(vault, item)
         self._sign_item(vault, item)
@@ -921,7 +977,7 @@ class Model(object):
             raise NotFound('No such version: {0}'.format(uuid))
         parent = self._version_cache[vault][uuid]['payload']['id']
         # XXX: revisit payload of item
-        item = self._new_version(vault, parent=parent, **version)
+        item = self._new_version(vault, version, parent=parent)
         item['payload']['deleted'] = True
         self._encrypt_item(vault, item)
         self._add_origin(vault, item)
@@ -1003,7 +1059,7 @@ class Model(object):
         if not synconly:
             for version in self.get_versions(vault):
                 if not version.get('deleted'):
-                    self.update_version(vault, version)
+                    self.replace_version(vault, version)
         return item
 
     # Synchronization
@@ -1056,7 +1112,7 @@ class Model(object):
         vres = va_item.validate(item)
         if not vres:
             raise ValidationError('Invalid item: {0}'.format(vres.error))
-        ptype = item['payload']['_type']
+        ptype = item['payload']['type']
         if ptype == 'Certificate':
             vres = va_cert.validate(item)
             if not vres:
@@ -1065,7 +1121,7 @@ class Model(object):
             self._log.debug('imported certificate, re-calculating trust')
             self._calculate_trust(item['vault'])
             # Find items that are signed by this certificate
-            query = "$vault = ? AND $payload$_type = 'EncryptedItem'" \
+            query = "$vault = ? AND $payload$type = 'EncryptedItem'" \
                     " AND $origin$node = ?"
             args = (vault, item['payload']['node'])
             items = self.database.findall('items', query, args)
@@ -1110,7 +1166,7 @@ class Model(object):
         # If we are adding certs we need to add them first and re-calculate
         # trust before adding the other items.
         certs = [ item for item in items
-                  if item['payload']['_type'] == 'Certificate'
+                  if item['payload']['type'] == 'Certificate'
                         and va_cert.match(item) ]
         if certs:
             # It is safe to import any certificate. Certificates require
@@ -1120,7 +1176,7 @@ class Model(object):
             self._log.debug('imported {} certificates and recalculated trust', len(certs))
             # Some items may have become exposed by the certs. Find items
             # that were signed by the certs we just added.
-            query = "$vault = ? AND $payload$_type = 'EncryptedItem'"
+            query = "$vault = ? AND $payload$type = 'EncryptedItem'"
             query += ' AND (%s)' % ' OR '.join([ '$origin$node = ?' ] * len(certs))
             args = [ vault ]
             args += [ cert['payload']['node'] for cert in certs ]
@@ -1131,7 +1187,7 @@ class Model(object):
         # Now see which items are valid under the possibly wider set of
         # certificates and add them
         encitems = [ item for item in items
-                     if item['payload']['_type'] == 'EncryptedItem'
+                     if item['payload']['type'] == 'EncryptedItem'
                             and va_encitem.match(item) ]
         self.database.insert_many('items', encitems)
         self._log.debug('imported {} encrypted items', len(encitems))

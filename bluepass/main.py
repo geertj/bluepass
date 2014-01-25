@@ -20,10 +20,10 @@ import binascii
 
 from gruvi import jsonrpc
 
-import bluepass
-from bluepass import platform, util, logging, crypto
-from bluepass.factory import singleton
-from bluepass.backend import Backend
+from . import platform, util, logging, crypto
+from .factory import singleton
+from .backend import Backend
+from ._version import version_info
 
 log = None
 
@@ -154,7 +154,7 @@ def main():
     # Early exits?
 
     if options.version:
-        print('Bluepass version {0}'.format(bluepass.__version__))
+        print('{0} version {1}'.format(version_info['name'].title(), version_info['version']))
         return 0
 
     if options.list_frontends:
