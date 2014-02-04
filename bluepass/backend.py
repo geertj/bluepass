@@ -17,7 +17,7 @@ import gruvi
 from bluepass import platform, util, logging
 from .factory import *
 from .component import Component
-from .database import Database
+from .store import Store
 from .model import Model
 from .passwords import PasswordGenerator
 from .locator import Locator
@@ -74,13 +74,12 @@ class Backend(Component):
         self._log.debug('initializing password generator')
         pwgen = singleton(PasswordGenerator)
 
-        self._log.debug('initializing database')
+        self._log.debug('initializing document store')
         fname = os.path.join(self.options.data_dir, 'bluepass.db')
-        database = singleton(Database, fname)
-        database.lock()
+        store = singleton(Store, fname)
 
         self._log.debug('initializing model')
-        model = singleton(Model, database)
+        model = singleton(Model, store)
         token = {'id': self.options.auth_token, 'expires': 0,
                  'rights': {'control_api': True}}
         model.add_token(token)
@@ -137,8 +136,8 @@ class Backend(Component):
         self._log.debug('shutting down control API')
         ctrlapi.close()
 
-        self._log.debug('shutting down database')
-        database.close()
+        self._log.debug('shutting down document store')
+        store.close()
 
         self._log.debug('stopped all backend components')
 

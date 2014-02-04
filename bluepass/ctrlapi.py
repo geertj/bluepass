@@ -202,8 +202,7 @@ class ControlApiHandler(JsonRpcHandler):
         """Unlock a vault.
 
         The vault *uuid* is unlocked using *password*. This decrypts the
-        private keys that are stored in the database and stored them in
-        memory.
+        private keys that are stored in the store and stores them in memory.
 
         It is not an error to unlock a vault that is already unlocked.
         """

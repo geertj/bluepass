@@ -125,11 +125,12 @@ def filter_vault(vault):
 
 
 class Model(object):
-    """This class implements our vault/item model on top of our database."""
+    """This class implements our vault/item model on top of a document
+    store."""
 
-    def __init__(self, database):
-        """Create a new model on top of `database`."""
-        self.database = database
+    def __init__(self, store):
+        """Create a new model on top of *store*."""
+        self.store = store
         self._tokens = {}
         self.vaults = {}
         self._log = logging.get_logger(self)
@@ -145,25 +146,25 @@ class Model(object):
         self._load_vaults()
 
     def _update_schema(self):
-        """Create or update the database schema."""
-        db = self.database
-        if 'configs' not in db.tables:
-            db.create_table('configs')
-        if 'tokens' not in db.tables:
-            db.create_table('tokens')
-        if 'vaults' not in db.tables:
-            db.create_table('vaults')
-        if 'items' not in db.tables:
-            db.create_table('items')
-            db.create_index('items', '$vault', 'TEXT', False)
-            db.create_index('items', '$origin$node', 'TEXT', False)
-            db.create_index('items', '$origin$seqnr', 'INT', False)
-            db.create_index('items', '$payload$type', 'TEXT', False)
+        """Create or update the document store."""
+        store = self.store
+        if 'configs' not in store.collections:
+            store.create_collection('configs')
+        if 'tokens' not in store.collections:
+            store.create_collection('tokens')
+        if 'vaults' not in store.collections:
+            store.create_collection('vaults')
+        if 'items' not in store.collections:
+            store.create_collection('items')
+            store.create_index('items', '$vault', 'TEXT')
+            store.create_index('items', '$origin$node', 'TEXT')
+            store.create_index('items', '$origin$seqnr', 'INT')
+            store.create_index('items', '$payload$type', 'TEXT')
 
     def _load_tokens(self):
         """Load all tokens."""
         total = invalid = 0
-        tokens = self.database.findall('tokens')
+        tokens = self.store.findall('tokens')
         for token in tokens:
             total += 1
             vres = va_token.validate(token)
@@ -177,7 +178,7 @@ class Model(object):
     def _check_items(self, vault):
         """Check all items in a vault."""
         total = errors = 0
-        items = self.database.findall('items', '$vault = ?', (vault,))
+        items = self.store.findall('items', '$vault = ?', (vault,))
         self._log.debug('Checking all items in vault "{}"', vault)
         for item in items:
             uuid = item.get('id', '<no id>')
@@ -222,7 +223,7 @@ class Model(object):
         self._version_cache[uuid] = {}
         self._linear_history[uuid] = {}
         self._full_history[uuid] = {}
-        seqnr = self.database.execute('items', """
+        seqnr = self.store.execute('items', """
                 SELECT MAX($origin$seqnr)
                 FROM items
                 WHERE $origin$node = ? AND $vault = ?
@@ -237,9 +238,9 @@ class Model(object):
     def _load_vaults(self):
         """Check and load all vaults."""
         total = errors = 0
-        filename = self.database.filename
-        self._log.debug('loading all vaults from database {}', filename)
-        vaults = self.database.findall('vaults')
+        filename = self.store.filename
+        self._log.debug('loading all vaults from store {}', filename)
+        vaults = self.store.findall('vaults')
         for vault in vaults:
             total += 1
             if not self._load_vault(vault):
@@ -300,7 +301,7 @@ class Model(object):
         # Create mapping of certificates by their signer
         certs = {}
         query = "$vault = ? AND $payload$type = 'Certificate'"
-        result = self.database.findall('items', query, (vault,))
+        result = self.store.findall('items', query, (vault,))
         for cert in result:
             assert va_item.match(cert)
             signer = cert['origin']['node']
@@ -420,7 +421,7 @@ class Model(object):
         """Load all current versions and their history."""
         versions = []
         query = "$vault = ? AND $payload$type = 'EncryptedItem'"
-        items = self.database.findall('items', query, (vault,))
+        items = self.store.findall('items', query, (vault,))
         for item in items:
             if not self._verify_item(vault, item) or \
                     not self._decrypt_item(vault, item) or \
@@ -638,21 +639,21 @@ class Model(object):
         vres = va_config.validate(config)
         if vres.error:
             raise ValidationError('Invalid config: {0}'.format(vres.error))
-        self.database.insert('configs', config)
+        self.store.insert('configs', config)
         return config
 
     def get_config(self, name):
         """Return the configuration document."""
-        return self.database.findone('configs', '$name = ?', (name,))
+        return self.store.findone('configs', '$name = ?', (name,))
 
     def get_configs(self):
         """Return all configurations."""
-        return self.database.findall('configs')
+        return self.store.findall('configs')
 
     def update_config(self, update):
         """Update the configuration document."""
         name = update.get('name')
-        config = self.database.findone('configs', '$name = ?', (name,))
+        config = self.store.findone('configs', '$name = ?', (name,))
         if config is None:
             raise NotFound('No such config: {0}'.format(name))
         for key,value in update.items():
@@ -660,15 +661,15 @@ class Model(object):
                 config[key] = value
             elif key in config:
                 del config[key]
-        self.database.update('configs', '$name = ?', (name,), config)
+        self.store.update('configs', config, '$name = ?', (name,))
         return config
 
     def delete_config(self, name):
         """Delete a configuration document."""
-        config = self.database.findone('configs', '$name = ?', (name,))
+        config = self.store.findone('configs', '$name = ?', (name,))
         if config is None:
             raise NotFound('No such config: {0}'.format(name))
-        self.database.delete('configs', '$name = ?', (name,))
+        self.store.delete('configs', '$name = ?', (name,))
 
     # Tokens
 
@@ -688,7 +689,7 @@ class Model(object):
             raise ValidationError('Token already exists: {0}'.format(tokid))
         self._tokens[tokid] = token
         if token.get('expires', '0') != '0':
-            self.database.insert('tokens', token)
+            self.store.insert('tokens', token)
         return token
 
     def delete_token(self, tokid):
@@ -696,7 +697,7 @@ class Model(object):
         if tokid not in self._tokens:
             raise NotFound('No such token: {0}'.format(tokid))
         del self._tokens[tokid]
-        self.database.delete('tokens', '$id = ?', (tokid,))
+        self.store.delete('tokens', '$id = ?', (tokid,))
 
     def validate_token(self, tokid, right=None):
         """Validate a token."""
@@ -738,7 +739,7 @@ class Model(object):
         vault['node'] = crypto.random_uuid()
         keys = self._create_vault_keys(password)
         vault['keys'] = dict(((key, keys[key][2]) for key in keys))
-        self.database.insert('vaults', vault)
+        self.store.insert('vaults', vault)
         self.vaults[uuid] = vault
         # Start unlocked by default
         self._private_keys[uuid] = (keys['sign'][0], keys['encrypt'][0])
@@ -765,12 +766,12 @@ class Model(object):
         """Return the vault with `uuid` or None if there is no such vault."""
         if uuid not in self.vaults:
             return
-        vault = self.database.findone('vaults', '$id = ?', (uuid,))
+        vault = self.store.findone('vaults', '$id = ?', (uuid,))
         return filter_vault(vault)
 
     def get_vaults(self):
         """Return a list of all vaults."""
-        return filter_vault(self.database.findall('vaults'))
+        return filter_vault(self.store.findall('vaults'))
 
     def update_vault(self, update):
         """Update a vault."""
@@ -783,7 +784,7 @@ class Model(object):
         vault = self.vaults[uuid]
         for key in update:
             vault[key] = update
-        self.database.update('vaults', '$id = ?', (vault['id'],), vault)
+        self.store.update('vaults', vault, '$id = ?', (vault['id'],))
         self.raise_event('VaultUpdated', vault)
         return filter_vault(vault)
 
@@ -792,13 +793,13 @@ class Model(object):
         if uuid not in self.vaults:
             raise NotFound('No such vault: {0}'.format(uuid))
         vault = self.vaults[uuid]
-        self.database.delete('vaults', '$id = ?', (uuid,))
-        self.database.delete('items', '$vault = ?', (uuid,))
+        self.store.delete('vaults', '$id = ?', (uuid,))
+        self.store.delete('items', '$vault = ?', (uuid,))
         # The VACUUM command here ensures that the data we just deleted is
         # removed from the sqlite database file. However, quite likely the
         # data is still on the disk, at least for some time. So this is not
         # a secure delete.
-        self.database.execute('vaults', 'VACUUM')
+        self.store.execute('vaults', 'VACUUM')
         del self.vaults[uuid]
         del self._private_keys[uuid]
         del self._version_cache[uuid]
@@ -819,16 +820,16 @@ class Model(object):
         stats['linear_history_size'] = linsize
         fullsize = sum((len(h) for h in self._full_history[uuid].items()))
         stats['full_history_size'] = fullsize
-        result = self.database.execute('items', """
+        result = self.store.execute('items', """
                     SELECT COUNT(*) FROM items WHERE $vault = ?
                     """, (uuid,))
         stats['total_items'] = result[0]
-        result = self.database.execute('items', """
+        result = self.store.execute('items', """
                     SELECT COUNT(*) FROM items WHERE $vault = ?
                     AND $payload$type = 'Certificate'
                     """, (uuid,))
         stats['total_certificates'] = result[0]
-        result = self.database.execute('items', """
+        result = self.store.execute('items', """
                     SELECT COUNT(*) FROM
                     (SELECT DISTINCT $payload$node FROM items
                      WHERE $vault = ? AND $payload$type = 'Certificate')
@@ -1069,7 +1070,7 @@ class Model(object):
         we know of."""
         if vault not in self.vaults:
             raise NotFound('No such vault: {0}'.format(vault))
-        vector = self.database.execute('items', """
+        vector = self.store.execute('items', """
                     SELECT $origin$node,MAX($origin$seqnr)
                     FROM items
                     WHERE $vault = ?
@@ -1091,7 +1092,7 @@ class Model(object):
         query = '$vault = ?'
         args = [vault]
         if vector is not None:
-            nodes = self.database.execute('items',
+            nodes = self.store.execute('items',
                             'SELECT DISTINCT $origin$node FROM items')
             terms = []
             vector = dict(vector)
@@ -1103,7 +1104,7 @@ class Model(object):
                     terms.append('$origin$node = ?')
                     args.append(node)
             query += ' AND (%s)' % ' OR '.join(terms)
-        return self.database.findall('items', query, args)
+        return self.store.findall('items', query, args)
 
     def import_item(self, vault, item, notify=True):
         """Import a single item."""
@@ -1117,19 +1118,19 @@ class Model(object):
             vres = va_cert.validate(item)
             if not vres:
                 raise ValidationError('Invalid certificate: {0}'.format(vres.error))
-            self.database.insert('items', item)
+            self.store.insert('items', item)
             self._log.debug('imported certificate, re-calculating trust')
             self._calculate_trust(item['vault'])
             # Find items that are signed by this certificate
             query = "$vault = ? AND $payload$type = 'EncryptedItem'" \
                     " AND $origin$node = ?"
             args = (vault, item['payload']['node'])
-            items = self.database.findall('items', query, args)
+            items = self.store.findall('items', query, args)
         elif ptype == 'EncryptedItem':
             vres = va_encitem.validate(item)
             if not vres:
                 raise ValidationError('Invalid encrypted item: {0}'.format(vres.error))
-            self.database.insert('items', item)
+            self.store.insert('items', item)
             items = [item]
         else:
             raise ValidationError('Unknown payload type: {0}'.format(ptype))
@@ -1171,7 +1172,9 @@ class Model(object):
         if certs:
             # It is safe to import any certificate. Certificates require
             # a trusted signature before they are considered trusted.
-            self.database.insert_many('items', certs)
+            with self.store.begin():
+                for item in certs:
+                    self.store.insert('items', item)
             self._calculate_trust(vault)
             self._log.debug('imported {} certificates and recalculated trust', len(certs))
             # Some items may have become exposed by the certs. Find items
@@ -1180,7 +1183,7 @@ class Model(object):
             query += ' AND (%s)' % ' OR '.join([ '$origin$node = ?' ] * len(certs))
             args = [ vault ]
             args += [ cert['payload']['node'] for cert in certs ]
-            certitems = self.database.findall('items', query, args)
+            certitems = self.store.findall('items', query, args)
             self._log.debug('{} items are possibly touched by these certs', len(certitems))
         else:
             certitems = []
@@ -1189,7 +1192,9 @@ class Model(object):
         encitems = [ item for item in items
                      if item['payload']['type'] == 'EncryptedItem'
                             and va_encitem.match(item) ]
-        self.database.insert_many('items', encitems)
+        with self.store.begin():
+            for item in encitems:
+                self.store.insert('items', item)
         self._log.debug('imported {} encrypted items', len(encitems))
         # Update version and history caches (if the vault is unlocked)
         assert vault in self._private_keys
