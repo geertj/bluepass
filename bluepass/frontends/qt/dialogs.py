@@ -365,7 +365,7 @@ class ApproveClientDialog(QDialog):
     def getApproval(self, info, send_response):
         backend = QApplication.instance().backend()
         self.pidedt.setText(str(info['pid']))
-        self.cmdedit.setText(info['executable'])
+        self.cmdedit.setText(info['exe'])
         self.send_response = send_response
         self.show()
 

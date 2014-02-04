@@ -8,115 +8,108 @@
 
 import os
 import sys
-import os.path
 import stat
 import pwd
 import fcntl
 import errno
+import socket
 
-__all__ = ['get_username', 'get_homedir', 'get_appdir', 'get_sockdir', 
-           'LockError', 'lock_file', 'unlock_file']
+from bluepass.platform import PlatformError
 
 
-def get_username(uid=None):
-    """Return the current user's name."""
-    if uid is None:
-        try:
-            return os.environ['USER']
-        except KeyError:
-            uid = os.getuid()
-    try:
-        return pwd.getpwuid(uid).pw_name
-    except KeyError:
-        return str(uid)
+__all__ = ['get_homedir', 'get_appdir', 'lock_file', 'unlock_file']
 
-def get_homedir(uid=None):
-    """Return the user's home directory."""
-    if uid is None:
-        try:
-            return os.environ['HOME']
-        except KeyError:
-            uid = os.getuid()
-    try:
-        return pwd.getpwuid(uid).pw_dir
-    except KeyError:
-        return None
 
 def _try_stat(fname):
     """Stat a file name but return None in case of error."""
     try:
         return os.stat(fname)
-    except OSError:
-        pass
+    except OSError as e:
+        if e.errno != errno.ENOENT:
+            raise
+
+
+def get_homedir():
+    """Return the user's home directory."""
+    homedir = os.environ.get('HOME')
+    if not homedir:
+        try:
+            homedir = pwd.getpwuid(os.getuid()).pw_dir
+        except KeyError:
+            pass
+    if not homedir:
+        raise PlatformError('could not determine home directory')
+    st = _try_stat(homedir)
+    if st is None or not stat.S_ISDIR(st.st_mode):
+        raise PlatformError('homedir does not exist or not a directory')
+    return homedir
+
 
 def get_appdir(appname):
     """Return a directory under $HOME to store application data."""
     candidates = []
     home = get_homedir()
+    # Prefer the freedesktop XDG directory scheme, if it is implemented.
+    # If not, use a traditional Unix dot directory.
     xdgdata = os.path.join(home, '.local', 'share')
     st = _try_stat(xdgdata)
     if st is not None and stat.S_ISDIR(st.st_mode):
         candidates.append(os.path.join(xdgdata, appname))
     candidates.append(os.path.join(home, '.%s' % appname))
-    # See if it already exists
+    # Use the first candidate that exists.
     for appdir in candidates:
         st = _try_stat(appdir)
         if st is not None and stat.S_ISDIR(st.st_mode):
             return appdir
-    # If not create it. Just fail if someone created a non-directory
-    # file system object at our desired location.
-    appdir = candidates[0]
-    os.mkdir(appdir)
-    return appdir
+    # If no candidates exist, create the first one.
+    os.mkdir(candidates[0])
+    return candidates[0]
 
 
-def get_sockdir():
-    """Return the per-user socket directory."""
-    sockdir = '/var/run/user/{0}'.format(os.getuid())
+def lock_file(filename):
+    """Lock the file *filename*.
+
+    On success, an opaque object that can be passed to :meth:`unlock_file` is
+    returned. On failure, an :class:`OSError` exception is raised.
+    """
+    # This uses the lockf() primitive. It has two major drawbacks which is that
+    # it is per process (making it harder to test) and that it releases the
+    # lock as soon as *any* fd referring to the file is closed (making it
+    # more fragile). However it works on NFS so on balance I think I can live
+    # with the drawbacks.
+    # See also: http://0pointer.de/blog/projects/locking.html
+    lockname = '{0}-lock'.format(filename)
+    flock = open(lockname, 'a+')
     try:
-        st = os.stat(sockdir)
-    except OSError:
-        st = None
-    if st and stat.S_ISDIR(st.st_mode):
-        return sockdir
-    return get_appdir('bluepass')
+        fcntl.lockf(flock.fileno(), fcntl.LOCK_EX|fcntl.LOCK_NB)
+    except IOError as e:
+        if e.errno not in (errno.EACCES, errno.EAGAIN):
+            flock.close()
+            raise
+        lockinfo = {}
+        flock.seek(0)
+        for line in flock:
+            key, value = line.split(':')
+            lockinfo[key.lower()] = value.strip()
+        flock.close()
+        pid = int(lockinfo['pid'])
+        from bluepass import platform
+        pinfo = platform.get_process_info(pid)
+        pinfo = 'alive; cmdline={0!r}'.format(' '.join(pinfo.cmdline)) if pinfo else 'remote?'
+        msg = '{0}: locked by process {1} ({2})'.format(filename, pid, pinfo)
+        raise OSError(e.errno, msg)
+    flock.truncate()
+    flock.write('PID: {0}\n'.format(os.getpid()))
+    flock.write('Command: {0}\n'.format(' '.join(sys.argv)))
+    flock.write('Hostname: {0}\n'.format(socket.gethostname()))
+    flock.flush()
+    return flock
 
 
-class LockError(Exception):
-    pass
-
-def lock_file(lockname):
-    """Create a lock file `lockname`."""
-    try:
-        fd = os.open(lockname, os.O_RDWR|os.O_CREAT, 0o644)
-        try:
-            fcntl.lockf(fd, fcntl.LOCK_EX|fcntl.LOCK_NB)
-        except IOError as e:
-            if e.errno not in (errno.EACCES, errno.EAGAIN):
-                raise
-            msg = 'lockf() failed to lock %s: %s' % (lockname, os.strerror(e.errno))
-            err = LockError(msg)
-            line = os.read(fd, 4096).decode('ascii')
-            lockinfo = line.rstrip().split(':')
-            if len(lockinfo) == 3:
-                err.lock_pid = int(lockinfo[0])
-                err.lock_uid = int(lockinfo[1])
-                err.lock_cmd = lockinfo[2]
-            raise err
-        os.ftruncate(fd, 0)
-        cmd = os.path.basename(sys.argv[0])
-        os.write(fd, ('%d:%d:%s\n' % (os.getpid(), os.getuid(), cmd)).encode('ascii'))
-    except (OSError, IOError) as e:
-        raise LockError('%s: %s' % (lockname, os.strerror(e.errno)))
-    lock = (fd, lockname)
-    return lock
-
-def unlock_file(lock):
+def unlock_file(flock):
     """Unlock a file."""
-    fd, lockname = lock
     try:
-        fcntl.lockf(fd, fcntl.LOCK_UN)
-        os.close(fd)
-        os.unlink(lockname)
+        flock.close()  # This will unlock the file.
+        os.unlink(flock.name)
     except (OSError, IOError):
         pass

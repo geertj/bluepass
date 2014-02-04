@@ -6,19 +6,28 @@
 # version 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
+from __future__ import absolute_import, print_function
+
 import os
 import sys
+
+from bluepass.errors import Error
+
+__all__ = ['PlatformError']
+
+
+class PlatformError(Error):
+    """Error calling a platform-specific API."""
 
 
 # Unix like operating systems
 
 if hasattr(os, 'fork'):
-    from bluepass.platform.posix import *
-    if sys.platform in ('linux', 'linux2'):
-        from bluepass.platform.linux import *
+    from .posix import *
+    if sys.platform.startswith('linux'):
+        from .linux import *
 
-    default_listen_address = os.path.join(get_sockdir(), 'bluepass-dev.sock')
-    #default_listen_address = 'localhost:0'
+    default_listen_address = os.path.join(get_appdir('bluepass'), 'bluepass.sock')
 
 # Windows
 

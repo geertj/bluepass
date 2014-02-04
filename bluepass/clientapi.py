@@ -90,13 +90,13 @@ class ClientApiHandler(HttpRestHandler):
     @validate_entity('{method: str="auth_program", expires: int>=0}')
     def create_token(self):
         transport = self.environ['gruvi.transport']
-        info = platform.get_peer_info(transport)
+        info = platform.get_peer_info(transport.getsockname(), transport.getpeername())
         if info is None:
             self._log.error('could not get peer info')
             raise HttpReturn(http.UNAUTHORIZED)
         request = self.environ['rest.entity']
         request.update(info._asdict())
-        request['sha256sum'] = util.file_checksum(info.executable, 'sha256')
+        request['sha256sum'] = util.file_checksum(info.exe, 'sha256')
         authorized = self.ctrlapi.upcall('approve_client', request)
         if not authorized:
             raise HttpReturn()

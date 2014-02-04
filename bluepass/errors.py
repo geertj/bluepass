@@ -23,6 +23,3 @@ class ValidationError(Error):
 
 class NotFound(Error):
     """An object was not found."""
-
-class PlatformError(Error):
-    """Error calling a platform-specific API."""
