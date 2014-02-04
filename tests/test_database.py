@@ -1,5 +1,5 @@
 #
-# This file is part of Bluepass. Bluepass is Copyright (c) 2012-2013
+# This file is part of Bluepass. Bluepass is Copyright (c) 2012-2014
 # Geert Jansen.
 #
 # Bluepass is free software available under the GNU General Public License,
@@ -8,15 +8,15 @@
 
 from __future__ import absolute_import, print_function
 
-from unit import *
-from bluepass.database import Database
+from tests.support import *
+from bluepass.database import *
 
 
 class TestDatabase(UnitTest):
     """Unit test suite for Database."""
 
     def setUp(self):
-        self.filename = self.tempfile()
+        self.filename = self.tempname()
         self.database = Database(self.filename)
         self.database.create_table('items')
 

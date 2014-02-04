@@ -9,7 +9,7 @@
 from __future__ import absolute_import, print_function
 
 import six
-from unit import *
+from tests.support import *
 
 from bluepass import validate as vmod
 from bluepass.validate import *

@@ -10,7 +10,7 @@ from __future__ import absolute_import, print_function
 
 import re
 
-from unit import *
+from tests.support import *
 from bluepass.parsing import *
 
 
