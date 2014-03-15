@@ -23,7 +23,7 @@ else:
 
 SkipTest = unittest.SkipTest
 
-__all__ = ['UnitTest', 'SkipTest', 'unittest', 'unix_only']
+__all__ = ['UnitTest', 'PerformanceTest', 'SkipTest', 'unittest', 'unix_only']
 
 
 def setup_logging():
@@ -31,7 +31,7 @@ def setup_logging():
     logger = logging.getLogger()
     if logger.handlers:
         return
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.DEBUG if '-v' in sys.argv else logging.INFO)
     handler = logging.StreamHandler(sys.stdout)
     template = '%(levelname)s %(message)s'
     handler.setFormatter(logging.Formatter(template))
@@ -67,12 +67,13 @@ def unix_only(func):
     return wrapped
 
 
-class UnitTest(unittest.TestCase):
-    """Base class for unit tests."""
+class BaseTest(unittest.TestCase):
+    """Base class for test suites."""
 
     @classmethod
     def setUpClass(cls):
         cls.__tmpdir = tempfile.mkdtemp('bluepass-test')
+        cls.__tmpinode = os.stat(cls.__tmpdir).st_ino
         cls._tmpindex = 1
         setup_logging()
         testdir = os.path.abspath(os.path.split(__file__)[0])
@@ -86,8 +87,7 @@ class UnitTest(unittest.TestCase):
         # Some paranoia checks to make me feel better before calling
         # shutil.rmtree()..
         assert '/..' not in cls.__tmpdir and '\\..' not in cls.__tmpdir
-        if '/tmp/' not in cls.__tmpdir and '\\temp\\' not in cls.__tmpdir:
-            return
+        assert os.stat(cls.__tmpdir).st_ino == cls.__tmpinode
         try:
             shutil.rmtree(cls.__tmpdir)
         except OSError:
@@ -95,6 +95,7 @@ class UnitTest(unittest.TestCase):
             # still open (WindowsError inherits from OSError).
             pass
         cls.__tmpdir = None
+        cls.__tmpinode = None
 
     @property
     def tempdir(self):
@@ -125,3 +126,23 @@ class UnitTest(unittest.TestCase):
         else:
             self.fail('Exception not raised: {0!s}'.format(exc))
         return exc
+
+
+class UnitTest(BaseTest):
+    """Base class for unit tests."""
+
+
+class PerformanceTest(BaseTest):
+    """Base class for performance tests."""
+
+    def add_result(self, result, params={}, name=None):
+        """Add a performance test result."""
+        if name is None:
+            frame = sys._getframe(1)
+            clsname = frame.f_locals.get('self', '').__class__.__name__
+            methname = frame.f_code.co_name
+            name = '{0}_{1}'.format(clsname[4:], methname[5:]).lower()
+        if params is not None:
+            params = ','.join(['{0}={1}'.format(k, params[k]) for k in params])
+        with open('performance.txt', 'a') as fout:
+            fout.write('{0:<32s} {1:<16.2f} {2:s}\n'.format(name, result, params))
