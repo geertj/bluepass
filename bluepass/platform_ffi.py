@@ -9,6 +9,7 @@
 from __future__ import absolute_import, print_function
 
 import sys
+import textwrap
 from cffi import FFI
 
 __all__ = []
@@ -20,28 +21,31 @@ __all__ = []
 cdefs = ''
 sources = ''
 
-if sys.platform in ('linux', 'linux2'):
-    cdefs += """
+HAVE_PRCTL = sys.platform in ('linux', 'linux2', 'linux3')
+HAVE_MLOCKALL = sys.platform in ('linux', 'linux2', 'linux3')
+
+if HAVE_PRCTL:
+    cdefs += textwrap.dedent("""\
         #define PR_SET_DUMPABLE ...
 
         int prctl(int option, unsigned long arg2, unsigned long arg3,
                   unsigned long arg4, unsigned long arg5);
-        """
-    sources += """
+        """)
+    sources += textwrap.dedent("""\
         #include <sys/prctl.h>
-        """
+        """)
 
-if sys.platform in ('linux', 'linux2'):
-    cdefs += """
+if HAVE_MLOCKALL:
+    cdefs += textwrap.dedent("""\
         #define MCL_CURRENT ...
         #define MCL_FUTURE ...
 
         int mlockall(int flags);
-        """
-    sources += """
+        """)
+    sources += textwrap.dedent("""\
         #include <sys/mman.h>
-        """
+        """)
 
 ffi = FFI()
 ffi.cdef(cdefs)
-lib = ffi.verify(sources, modulename='bluepass_platform_cffi')
+lib = ffi.verify(sources, modulename='_platform_ffi', ext_package='bluepass')

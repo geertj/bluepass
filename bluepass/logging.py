@@ -16,19 +16,19 @@ import gruvi.logging
 
 __all__ = ['get_logger', 'setup_logging']
 
-_default_name = 'bluepass'
+_default_logger = 'bluepass'
 
 
 def get_logger(context='', name=None):
     """Return a logger for *context*."""
     if name is None:
-        name = _default_name
+        name = _default_logger
     return gruvi.logging.get_logger(context, name)
 
-
 def set_default_logger(name):
-    global _default_name
-    _default_name = name
+    """Set the default logger name."""
+    global _default_logger
+    _default_logger = name
 
 
 def setup_logging(options):
@@ -45,6 +45,5 @@ def setup_logging(options):
         logfmt = '%(asctime)s %(name)s %(levelname)s %(message)s'
         handler.setFormatter(logging.Formatter(logfmt))
         logger.addHandler(handler)
-    level = logging.DEBUG if options.debug else \
-                logging.INFO if options.verbose else logging.WARNING
+    level = options.debug and logging.DEBUG or logging.INFO
     logger.setLevel(level)

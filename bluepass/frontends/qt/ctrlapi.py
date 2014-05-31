@@ -11,8 +11,9 @@ from __future__ import absolute_import, print_function
 from PyQt4.QtCore import Signal
 from PyQt4.QtGui import QApplication
 
-from . import qjsonrpc
-from .qjsonrpc import *
+from gruvi import jsonrpc
+from bluepass.rpckit import RpcHandler, route
+from .qjsonrpc import QJsonRpcClient, QJsonRpcError
 
 __all__ = ['ControlApiError', 'ControlApiClient']
 
@@ -20,37 +21,44 @@ __all__ = ['ControlApiError', 'ControlApiClient']
 ControlApiError = QJsonRpcError
 
 
-class ControlApiHandler(QJsonRpcHandler):
+class ControlApiHandler(RpcHandler):
     """JSON-RPC message handler used by :class:`ControlApiClient`."""
+
+    Local = type('Object', (object,), {})
 
     def __init__(self, notification_handler):
         super(ControlApiHandler, self).__init__()
         self._notification_handler = notification_handler
 
-    @notification('*')
-    def catch_all_notifications(self, *ignored):
-        self._notification_handler(self.message)
+    def __call__(self, message, client):
+        # Adapt call signature to QJsonRpcClient
+        super(ControlApiHandler, self).__call__(message, None, client)
 
-    @request()
+    def method_not_found(self, method, *args):
+        if self.message.get('id'):
+            return  # method call
+        self._notification_handler(method, *args)
+
+    @route()
     def get_pairing_approval(self, name, vault, pin, kxid):
         message = self.message
-        client = self.client
+        protocol = self.protocol
         mainwindow = QApplication.instance().mainWindow()
         def send_response(approved):
-            reply = qjsonrpc.create_response(message, approved)
-            client.send_message(reply)
-        self.send_response = False
+            reply = jsonrpc.create_response(message, approved)
+            protocol.send_message(reply)
+        self.delay_response()
         mainwindow.showPairingApprovalDialog(name, vault, pin, kxid, send_response)
 
-    @request()
+    @route()
     def approve_client(self, info):
         message = self.message
-        client = self.client
+        protocol = self.protocol
         mainwindow = QApplication.instance().mainWindow()
         def send_response(approved):
-            reply = qjsonrpc.create_response(message, approved)
-            client.send_message(reply)
-        self.send_response = False
+            reply = jsonrpc.create_response(message, approved)
+            protocol.send_message(reply)
+        self.delay_response()
         mainwindow.showApproveClientDialog(info, send_response)
 
 
@@ -58,31 +66,28 @@ class ControlApiClient(QJsonRpcClient):
     """Qt frontend client for the Bluepass control API."""
 
     def __init__(self, parent=None):
-        handler = ControlApiHandler(self._notification_handler)
+        handler = ControlApiHandler(self._forward_notifications)
         super(ControlApiClient, self).__init__(handler, parent=parent)
 
-    def _notification_handler(self, message):
+    def _forward_notifications(self, method, *args):
         """Forward notifications to corresponding Qt signals."""
-        assert message.get('id') is None
-        method = message.get('method')
-        assert method is not None
         signal = getattr(self, method, None)
         if signal and hasattr(signal, 'emit'):
-            signal.emit(*message.get('params', ()))
+            signal.emit(*args)
 
-    VaultAdded = Signal(dict)
-    VaultRemoved = Signal(dict)
-    VaultCreationComplete = Signal(str, bool, dict)
-    VaultLocked = Signal(dict)
-    VaultUnlocked = Signal(dict)
-    VersionsAdded = Signal(str, list)
+    VaultCreated = Signal(dict)
+    VaultDeleted = Signal(str)
+    VaultCreationComplete = Signal(str, bool, str)
+    VaultLocked = Signal(str)
+    VaultUnlocked = Signal(str)
+    SecretsAdded = Signal(str, list)
     NeighborDiscovered = Signal(dict)
     NeighborUpdated = Signal(dict)
     NeighborDisappeared = Signal(dict)
     AllowPairingStarted = Signal(int)
     AllowPairingEnded = Signal()
-    PairNeighborStep1Completed = Signal(str, bool, dict)
-    PairNeighborStep2Completed = Signal(str, bool, dict)
+    PairNeighborStep1Completed = Signal(str, bool, str)
+    PairNeighborStep2Completed = Signal(str, bool, str)
     PairingComplete = Signal(str)
 
     def login(self, auth_token):
@@ -91,17 +96,17 @@ class ControlApiClient(QJsonRpcClient):
     def get_version_info(self):
         return self.call_method('get_version_info')
 
-    def create_config(self, name):
-        return self.call_method('create_config', name)
+    def create_config(self, template):
+        return self.call_method('create_config', template)
 
     def get_config(self, name):
         return self.call_method('get_config', name)
 
-    def update_config(self, config):
-        return self.call_method('update_config', config)
+    def update_config(self, name, update):
+        return self.call_method('update_config', name, update)
 
-    def create_vault(self, name, password):
-        return self.call_method('create_vault', name, password)
+    def create_vault(self, template):
+        return self.call_method('create_vault', template)
 
     def get_vault(self, uuid):
         return self.call_method('get_vault', uuid)
@@ -109,41 +114,41 @@ class ControlApiClient(QJsonRpcClient):
     def get_vaults(self):
         return self.call_method('get_vaults')
 
-    def update_vault(self, vault):
-        return self.call_method('update_vault', vault)
+    def update_vault(self, uuid, vault):
+        return self.call_method('update_vault', uuid, vault)
 
-    def delete_vault(self, vault):
-        return self.call_method('delete_vault', vault)
+    def delete_vault(self, uuid):
+        return self.call_method('delete_vault', uuid)
 
     def get_vault_statistics(self, uuid):
         return self.call_method('get_vault_statistics', uuid)
 
-    def unlock_vault(self, uuid, password):
-        return self.call_method('unlock_vault', uuid, password)
+    def unlock_vault(self, uuid, password, cache_fields=[]):
+        return self.call_method('unlock_vault', uuid, password, cache_fields)
 
     def lock_vault(self, uuid):
         return self.call_method('lock_vault', uuid)
 
-    def vault_is_locked(self, uuid):
-        return self.call_method('vault_is_locked', uuid)
+    def get_vault_status(self, uuid):
+        return self.call_method('get_vault_status', uuid)
 
-    def get_version(self, vault, uuid):
-        return self.call_method('get_version', vault, uuid)
+    def get_secret(self, vault, uuid):
+        return self.call_method('get_secret', vault, uuid)
 
-    def get_versions(self, vault):
-        return self.call_method('get_versions', vault)
+    def get_secrets(self, vault):
+        return self.call_method('get_secrets', vault)
 
-    def add_version(self, vault, version):
-        return self.call_method('add_version', vault, version)
+    def create_secret(self, vault, template):
+        return self.call_method('create_secret', vault, template)
 
-    def replace_version(self, vault, version):
-        return self.call_method('replace_version', vault, version)
+    def update_secret(self, vault, uuid, update):
+        return self.call_method('update_secret', vault, uuid, update)
 
-    def delete_version(self, vault, version):
-        return self.call_method('delete_version', vault, version)
+    def delete_secret(self, vault, uuid):
+        return self.call_method('delete_secret', vault, uuid)
     
-    def get_version_history(self, vault, uuid):
-        return self.call_method('get_version_history', vault, uuid)
+    def get_secret_history(self, vault, uuid):
+        return self.call_method('get_secret_history', vault, uuid)
 
     def generate_password(self, method, *args):
         return self.call_method('generate_password', method, *args)

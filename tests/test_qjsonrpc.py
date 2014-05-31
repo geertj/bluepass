@@ -11,7 +11,7 @@ from __future__ import absolute_import, print_function
 from PyQt4.QtCore import QCoreApplication
 from gruvi import jsonrpc
 
-from unit import *
+from support import *
 from bluepass.frontends.qt import qjsonrpc
 from bluepass.frontends.qt.qjsonrpc import *
 
@@ -66,6 +66,7 @@ class TestQJsonRpc(UnitTest):
         server.connect(ssock)
         result = client.call_method('echo', 'foo')
         self.assertEqual(result, ['foo'])
+        csock.close(); ssock.close()
 
     def test_request_timeout(self):
         csock, ssock = socketpair()
@@ -75,6 +76,7 @@ class TestQJsonRpc(UnitTest):
         server = QJsonRpcClient(blackhole_app)
         server.connect(ssock)
         self.assertRaises(QJsonRpcError, client.call_method, 'echo', 'foo')
+        csock.close(); ssock.close()
 
     def test_notification(self):
         csock, ssock = socketpair()
@@ -86,8 +88,9 @@ class TestQJsonRpc(UnitTest):
         client.send_notification('notify', 'foo')
         client.send_notification('notify', 'bar', 'baz')
         notifications = client.call_method('get')
-        self.assertEquals(notifications, [['notify', []], ['notify', ['foo']],
-                                          ['notify', ['bar', 'baz']]])
+        self.assertEqual(notifications, [['notify', []], ['notify', ['foo']],
+                                         ['notify', ['bar', 'baz']]])
+        csock.close(); ssock.close()
 
 
 if __name__ == '__main__':

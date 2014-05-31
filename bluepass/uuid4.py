@@ -9,10 +9,10 @@
 from __future__ import absolute_import, print_function
 
 import re
-from gruvi import compat
+import six
 
 _re_uuid = re.compile('^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-'
                       '[89ab][0-9a-f]{3}-[0-9a-f]{12}$', re.I)
 
 def check(s):
-    return isinstance(s, compat.string_types) and bool(_re_uuid.match(s))
+    return isinstance(s, six.string_types) and bool(_re_uuid.match(s))

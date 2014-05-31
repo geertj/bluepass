@@ -216,8 +216,8 @@ class ManageVaults(Page):
         vaults = backend.get_vaults()
         for vault in vaults:
             self.vaultAdded(vault)
-        backend.VaultAdded.connect(self.vaultAdded)
-        backend.VaultRemoved.connect(self.vaultRemoved)
+        backend.VaultCreated.connect(self.vaultAdded)
+        backend.VaultDeleted.connect(self.vaultRemoved)
 
     def reset(self):
         preamble = 'The following vaults are present:'
@@ -237,16 +237,16 @@ class ManageVaults(Page):
         table.setItem(row, 1, Item(vault['name']))
         backend = QApplication.instance().backend()
         stats = backend.get_vault_statistics(vault['id'])
-        table.setItem(row, 2, Item(str(stats['current_versions'])))
+        table.setItem(row, 2, Item(str(stats['current_secrets'])))
         table.setItem(row, 3, Item(str(stats['trusted_nodes'])))
         table.sortItems(1)
 
     @Slot(dict)
-    def vaultRemoved(self, vault):
+    def vaultRemoved(self, uuid):
         rows = self.table.rowCount()
         for row in range(rows):
-            uuid = self.table.item(row, 0).text()
-            if vault['id'] == uuid:
+            vuuid = self.table.item(row, 0).text()
+            if uuid == vuuid:
                 self.table.removeRow(row)
                 break
 
@@ -278,7 +278,7 @@ class ManageVaults(Page):
             return
         backend = QApplication.instance().backend()
         vault = backend.get_vault(uuid)
-        backend.delete_vault(vault)
+        backend.delete_vault(vault['id'])
 
 
 class PinEditor(QLineEdit):
@@ -572,15 +572,19 @@ class CreateVault(Page):
         else:
             self.showPopup('<i>Creating vault. This may take a few seconds.</i>',
                            minimum_show=2000, progress=100)
-            self.uuid = backend.create_vault(name, password)
+            template = {'name': name, 'password': password}
+            self.uuid = backend.create_vault(template)
 
-    @Slot(str, bool, dict)
-    def vaultCreationComplete(self, uuid, status, detail):
+    @Slot(str, bool, str)
+    def vaultCreationComplete(self, uuid, status, message):
         """Signal that arrives when the asynchronous vault creation
         has completed."""
         if uuid != self.uuid:
             return
         if status:
+            # Ensure the name and group are cached
+            backend = QApplication.instance().backend()
+            backend.unlock_vault(uuid, '', ['name', 'group'])
             if self.name == 'NewVaultSimplified':
                 mainwindow = QApplication.instance().mainWindow()
                 mainwindow.showMessage('The vault was successfully created.')
@@ -593,21 +597,22 @@ class CreateVault(Page):
                 page.showPopup('The vault was succesfully created.', autohide=2000)
                 self.vaultmgr.showPage(page)
         else:
-            status = '<i>Could not create vault: %s</i>' % detail.get('error_message')
+            status = '<i>Could not create vault: %s</i>' % message
             self.status.setText(status)
-            self.logger.error('%s\n%s' % (detail.get('message'), detail.get('data')))
         self.createbtn.setEnabled(True)
         self.uuid = None
 
     @Slot(str, bool, dict)
-    def pairNeighborStep2Completed(self, cookie, status, detail):
+    def pairNeighborStep2Completed(self, cookie, status, message):
         if cookie != self.cookie:
             return
         if status:
+            backend = QApplication.instance().backend()
+            print('MY UID', self.uuid)
+            backend.unlock_vault(self.uuid, '', ['name', 'group'])
             self.done()
         else:
-            self.showPopup('<i>Error: %s</i>' % detail['data'],
-                           minimum_show=2000, autohide=2000)
+            self.showPopup('<i>Error: %s</i>' % message, minimum_show=2000, autohide=2000)
         self.createbtn.setEnabled(True)
         self.cookie = None
 
@@ -688,8 +693,8 @@ class ShowNeighbors(Page):
         self.vaults = {}
         self.neighbors = {}
         backend = QApplication.instance().backend()
-        backend.VaultAdded.connect(self.vaultAdded)
-        backend.VaultRemoved.connect(self.vaultRemoved)
+        backend.VaultCreated.connect(self.vaultAdded)
+        backend.VaultDeleted.connect(self.vaultRemoved)
         vaults = backend.get_vaults()
         for vault in vaults:
             self.vaultAdded(vault)
@@ -711,14 +716,14 @@ class ShowNeighbors(Page):
                 self.removeNeighbor(neighbor)
 
     @Slot(dict)
-    def vaultRemoved(self, vault):
-        assert vault['id'] in self.vaults
-        del self.vaults[vault['id']]
+    def vaultRemoved(self, uuid):
+        assert uuid in self.vaults
+        del self.vaults[uuid]
         for node in self.neighbors:
             neighbor = self.neighbors[node]
             # The removed vault should show any neighbor offering that vault,
             # if that neighbor would have been visible without the vault.
-            if neighbor['vault'] == vault['id'] \
+            if neighbor['vault'] == uuid \
                     and len(neighbor['addresses']) > 0 \
                     and neighbor['properties'].get('visible') == 'true':
                 self.updateNeighbor(neighbor)
@@ -786,7 +791,7 @@ class ShowNeighbors(Page):
         self.vault = vault
 
     @Slot(str, bool, dict)
-    def pairNeighborStep1Completed(self, cookie, status, detail):
+    def pairNeighborStep1Completed(self, cookie, status, message):
         if cookie != self.cookie:
             return
         if status:
@@ -796,10 +801,15 @@ class ShowNeighbors(Page):
             page.reset()
             page.setName(self.vault)
             page.cookie = cookie
+            # XXX: revise this (add UUID to signal)?
+            items = self.table.selectedIndexes()
+            row = items[0].row()
+            node = self.table.item(row, 0).text()
+            page.uuid = self.neighbors[node]['vault']
+            print('SET UID TO', page.uuid)
             vaultmgr.showPage(page)
         else:
-            self.showPopup('<i>Error: %s</i>' % detail['data'],
-                           minimum_show=2000, autohide=2000)
+            self.showPopup('<i>Error: %s</i>' % message, minimum_show=2000, autohide=2000)
             self.hidePopup()
         self.connectbtn.setEnabled(True)
 

@@ -28,17 +28,18 @@ from .dialogs import EditPasswordDialog
 def sortkey(version):
     """Return a key that established the order of items as they
     appear in our VaultView."""
-    key = '%s\x00%s' % (version.get('group', ''),
-                        version.get('name', ''))
+    fields = version['fields']
+    key = '%s\x00%s' % (fields.get('group', ''), fields.get('name', ''))
     return key
 
 
 def searchkey(version):
     """Return a single string that is used for matching items with
     the query entered in the search box."""
+    fields = version['fields']
     key = '%s\000%s\000%s\000%s' % \
-            (version.get('name', ''), version.get('comment', ''),
-             version.get('url', ''), version.get('username', ''))
+            (fields.get('name', ''), fields.get('comment', ''),
+             fields.get('url', ''), fields.get('username', ''))
     return key.lower()
 
 
@@ -194,7 +195,7 @@ class UnlockVaultWidget(QFrame):
         try:
             success = backend.unlock_vault(self.vault, password)
         except ControlApiError as e:
-            status = '<i>Could not unlock vault: %s</i>' % e.error_message
+            status = '<i>Could not unlock vault: %s</i>' % str(e)
             self.setStatus(status)
             return
         self.setStatus('')
@@ -207,7 +208,7 @@ class UnlockVaultWidget(QFrame):
             uuid = vault['id']
             if uuid == self.vault:
                 continue
-            if not backend.vault_is_locked(uuid):
+            if backend.get_vault_status(uuid) == 'UNLOCKED':
                 continue
             try:
                 backend.unlock_vault(uuid, password)
@@ -328,16 +329,19 @@ class PasswordItem(QLabel):
     @Slot(dict)
     def updateData(self, version):
         self.version = version
-        self.setText(version.get('name', ''))
+        fields = self.version['fields']
+        self.setText(fields.get('name', ''))
 
     @Slot()
     def copyUsernameToClipboard(self):
-        username = self.version.get('username', '')
+        fields = self.version['fields']
+        username = fields.get('username', '')
         QApplication.instance().copyToClipboard(username)
 
     @Slot()
     def copyPasswordToClipboard(self):
-        password = self.version.get('password', '')
+        fields = self.version['fields']
+        password = fields.get('password', '')
         QApplication.instance().copyToClipboard(password, 60)
 
     @Slot()
@@ -372,9 +376,7 @@ class PasswordItem(QLabel):
     @Slot()
     def deleteItem(self):
         backend = QApplication.instance().backend()
-        version = { 'id': self.version['id'], 'name': self.version['name'],
-                    'type': self.version['type'] }
-        backend.delete_version(self.vault, version)
+        backend.delete_secret(self.vault, self.version['id'])
 
 
 class VersionList(QScrollArea):
@@ -449,11 +451,11 @@ class VaultView(QWidget):
         self.groupRemoved.connect(editpwdlg.removeGroup)
         self.editpwdlg = editpwdlg
         backend = QApplication.instance().backend()
-        backend.VaultAdded.connect(self.updateVault)
-        backend.VaultRemoved.connect(self.updateVault)
+        backend.VaultCreated.connect(self.updateVault)
+        backend.VaultDeleted.connect(self.updateVault)
         backend.VaultLocked.connect(self.vaultLocked)
         backend.VaultUnlocked.connect(self.vaultUnlocked)
-        backend.VersionsAdded.connect(self.updateVaultItems)
+        backend.SecretsAdded.connect(self.updateVaultItems)
 
     def addWidgets(self):
         """Create main layout."""
@@ -495,11 +497,16 @@ class VaultView(QWidget):
 
     def updateVault(self, vault):
         """Update a vault, which may or may not exist already."""
+        # XXX: clean this up
+        if isinstance(vault, str):
+            deleted = True
+            vault = self.vaults[vault]
+        else:
+            deleted = False
         logger = self.logger
         uuid = vault['id']
         name = vault.get('name', '')
         logger.debug('updateVault() for %s (name: "%s")', uuid, name)
-        deleted = vault.get('deleted', False)
         if not deleted and (uuid not in self.vaults or
                     uuid in self.vaults and
                     self.vaults[uuid].get('deleted', False)):
@@ -515,12 +522,12 @@ class VaultView(QWidget):
             widgets = (unlocker, noitems, items)
             pos = self.vault_order.insert(name, uuid, widgets)
             backend = QApplication.instance().backend()
-            if not backend.vault_is_locked(uuid):
+            if backend.get_vault_status(uuid) == 'UNLOCKED':
                 logger.debug('new vault is unlocked')
                 self.versions[uuid] = {}
                 self.version_order[uuid] = SortedList()
                 self.current_item[uuid] = None
-                versions = backend.get_versions(vault['id'])
+                versions = backend.get_secrets(vault['id'])
                 self.updateVaultItems(uuid, versions)
             self.tabbar.insertTab(pos, name)
         elif not deleted and uuid in self.vaults and \
@@ -556,7 +563,7 @@ class VaultView(QWidget):
     def updateVaultItems(self, uuid, versions):
         """Load the versions of a vault."""
         logger = self.logger
-        logger.debug('updating %d versions for vault %s', len(versions), uuid)
+        logger.debug('updating {} versions for vault {}', len(versions), uuid)
         assert uuid in self.vaults
         vault = self.vaults[uuid]
         name = vault.get('name', '')
@@ -572,6 +579,7 @@ class VaultView(QWidget):
         # need to insert items in the middle).
         for version in versions:
             vuuid = version['id']
+            print('VERSION', repr(version))
             key = sortkey(version)
             present = not version.get('deleted', False)
             cur_present = vuuid in current_versions
@@ -594,7 +602,7 @@ class VaultView(QWidget):
             curversion = current_versions.get(vuuid)
             if mod in ('new', 'update'):
                 # Need to insert a new group?
-                group = version.get('group', '')
+                group = version['fields'].get('group', '')
                 grouppos = current_order.find(group)
                 if grouppos == -1:
                     item = GroupItem(uuid, group)
@@ -605,6 +613,7 @@ class VaultView(QWidget):
             if mod == 'new':
                 assert curversion is None
                 pos = current_order.find(key)
+                print('KEY', repr(key))
                 assert pos == -1
                 item = PasswordItem(uuid, version)
                 item.clicked.connect(self.changeCurrentItem)
@@ -636,7 +645,7 @@ class VaultView(QWidget):
                     self.current_item[uuid] = None
             if mod in ('update', 'delete'):
                 # Was this the last element in a group?
-                curgroup = curversion.get('group', '')
+                curgroup = curversion['fields'].get('group', '')
                 curpos = current_order.find(curgroup)
                 assert curpos != -1
                 prefix = '%s\x00' % curgroup
@@ -718,11 +727,11 @@ class VaultView(QWidget):
         return item
 
     @Slot(dict)
-    def vaultLocked(self, vault):
+    def vaultLocked(self, uuid):
         """Called when a vault was locked."""
-        uuid = vault['id']
         if uuid not in self.vaults:
             return
+        vault = self.vaults[uuid]
         name = vault.get('name', '')
         pos = self.vault_order.find(name, uuid)
         if pos == -1:
@@ -740,11 +749,11 @@ class VaultView(QWidget):
         self.currentVaultChanged.emit(uuid)
 
     @Slot(dict)
-    def vaultUnlocked(self, vault):
+    def vaultUnlocked(self, uuid):
         """Called when a vault was unlocked."""
-        uuid = vault['id']
         if uuid not in self.vaults:
             return
+        vault = self.vaults[uuid]
         name = vault.get('name', '')
         pos = self.vault_order.find(name, uuid)
         if pos == -1:
@@ -756,7 +765,7 @@ class VaultView(QWidget):
         self.version_order[uuid] = SortedList()
         self.current_item[uuid] = None
         backend = QApplication.instance().backend()
-        versions = backend.get_versions(uuid)
+        versions = backend.get_secrets(uuid)
         self.updateVaultItems(uuid, versions)
         unlocker.reset()
         if self.current_vault and self.current_vault != uuid:
@@ -878,8 +887,8 @@ class VaultView(QWidget):
         """Show a dialog to add a password."""
         vault = self.currentVault()
         current = self.selectedVersion()
-        group = current.get('group') if current else ''
-        version = { 'type': 'Password', 'group': group }
+        group = current['fields'].get('group') if current else ''
+        version = { 'fields': {'type': 'Password', 'group': group }}
         self.editpwdlg.editPassword(vault, version)
 
     @Slot(str, dict)

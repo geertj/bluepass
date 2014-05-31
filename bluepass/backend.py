@@ -44,7 +44,7 @@ class Backend(Component):
         """The *options* argument must be the parsed command-line arguments."""
         super(Backend, self).__init__(options)
         self._log = logging.get_logger(self)
-        self._stop_event = gruvi.Signal()
+        self._stop_event = gruvi.Event()
         self._process = None
 
     @classmethod
@@ -65,10 +65,6 @@ class Backend(Component):
 
     def run(self):
         """Initialize the backend and run its main loop."""
-        if not six.PY3:
-            import bluepass.ssl
-            bluepass.ssl.patch_ssl_wrap_socket()
-
         self._log.debug('initializing backend components')
 
         self._log.debug('initializing password generator')
@@ -81,8 +77,8 @@ class Backend(Component):
         self._log.debug('initializing model')
         model = singleton(Model, store)
         token = {'id': self.options.auth_token, 'expires': 0,
-                 'rights': {'control_api': True}}
-        model.add_token(token)
+                 'allow': {'control_api': True}}
+        model.create_token(token)
 
         self._log.debug('initializing locator')
         locator = singleton(Locator)
@@ -111,25 +107,22 @@ class Backend(Component):
         if self.options.trace:
             tracename = os.path.join(self.options.data_dir, 'backend.trace')
             tracefile = open(tracename, 'w')
-            ctrlapi.set_tracefile(tracefile)
-        addr = gruvi.util.paddr(self.options.listen)
+            ctrlapi._set_tracefile(tracefile)
+        addr = gruvi.paddr(self.options.listen)
         ctrlapi.listen(addr)
 
         fname = os.path.join(self.options.data_dir, 'backend.run')
-        addr = gruvi.util.getsockname(ctrlapi.transport)
-        runinfo = { 'listen': gruvi.util.saddr(addr), 'pid': os.getpid() }
+        addr = ctrlapi.addresses[0]
+        runinfo = { 'listen': gruvi.saddr(addr), 'pid': os.getpid() }
         util.write_atomic(fname, json.dumps(runinfo))
 
-        self._log.debug('initializing client API')
-        clientapi = singleton(ClientApiServer)
-        clientapi.listen()
+        #self._log.debug('initializing client API')
+        #clientapi = singleton(ClientApiServer)
+        #clientapi.listen()
 
         # This is where the backend runs (until stop_event is raised or CTRL-C
         # is pressed).
-        try:
-            self._stop_event.wait(timeout=None, interrupt=True)
-        except KeyboardInterrupt:
-            self._log.info('CTRL-C pressed, exiting')
+        self._stop_event.wait()
 
         self._log.debug('backend event loop terminated')
 
@@ -145,4 +138,4 @@ class Backend(Component):
 
     def stop(self):
         """Stop the backend."""
-        self._stop_event.emit()
+        self._stop_event.set()

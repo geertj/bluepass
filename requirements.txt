@@ -1,6 +1,2 @@
-# pycparser/cffi are transitive dependencies introduced by Gruvi.
-# Gruvi's setup.py script depends on them being installed first.
-pycparser
-cffi
--e git://github.com/geertj/gruvi.git#egg=gruvi
+gruvi
 six

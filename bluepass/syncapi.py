@@ -8,24 +8,15 @@
 
 from __future__ import absolute_import, print_function
 
-import os
 import re
-import sys
 import time
 import logging
-import binascii
-import socket
-import ssl
+import six
 
-try:
-    import httplib as http
-    from urlparse import parse_qs
-except ImportError:
-    from http import client as http
-    from urllib.parse import parse_qs
+from six.moves.urllib.parse import parse_qs
 
 import gruvi
-from gruvi import Fiber, compat, util
+from gruvi import Fiber, util, http, QueueEmpty
 from gruvi.http import HttpServer, HttpClient
 
 from . import _version, json, base64, uuid4, util, logging, crypto
@@ -124,7 +115,7 @@ class SyncApiClient(object):
     def __init__(self):
         """Create a new client for the syncapi API at `address`."""
         self.address = None
-        self.connection = None
+        self.client = None
         self._log = logging.get_logger(self)
 
     def _make_request(self, method, url, headers=None, body=None):
@@ -141,12 +132,11 @@ class SyncApiClient(object):
         else:
             body = json.dumps(body).encode('utf8')
             headers.append(('Content-Type', 'text/json'))
-        connection = self.connection
-        assert connection is not None
+        assert self.client is not None
         try:
             self._log.debug('client request: {} {}', method, url)
-            connection.request(method, url, headers, body)
-            response = connection.getresponse()
+            self.client.request(method, url, headers, body)
+            response = self.client.get_response()
             body = response.read()
         except gruvi.Error as e:
             self._log.error('error when making HTTP request: {}', str(e))
@@ -165,35 +155,33 @@ class SyncApiClient(object):
 
     def connect(self, address):
         """Connect to the remote syncapi."""
+        context = gruvi.create_ssl_context(ciphers='ADH+AES')
         dhparams = util.asset('pem', 'dhparams.pem')
-        if compat.PY3:
-            context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
-            context.set_ciphers('ADH+AES')
-            context.load_dh_params(dhparams)
-            sslargs = {'context': context}
-        else:
-            sslargs = {'ciphers': 'ADH+AES', 'dh_params': dhparams}
-        connection = HttpClient()
+        context.load_dh_params(dhparams)
+        client = HttpClient()
         try:
-            connection.connect(address, ssl=True, **sslargs)
+            client.connect(address, ssl=context)
         except gruvi.Error as e:
             self._log.error('could not connect to {}:{}' % address)
             raise SyncApiError('Could not connect')
         self.address = address
-        self.connection = connection
+        self.client = client
 
     def close(self):
         """Close the connection."""
-        if self.connection is not None:
+        if self.client is not None:
             try:
-                conection.close()
+                self.client.close()
             except Exception:
                 pass
-        self.connection = None
+        self.client = None
 
     def _get_hmac_cb_auth(self, kxid, pin):
         """Return the headers for a client to server HMAC_CB auth."""
-        cb = self.connection.transport.ssl.get_channel_binding('tls-unique')
+        sslinfo = self.client.connection[0].get_extra_info('sslinfo')
+        cb = sslinfo.get_channel_binding('tls-unique')
+        print("CB (CLIENT)", repr(cb))
+        print("PIN (CLIENT)", pin)
         signature = crypto.hmac(adjust_pin(pin, +1).encode('ascii'), cb, 'sha1')
         signature = base64.encode(signature)
         auth = create_option_header('HMAC_CB', kxid=kxid, signature=signature)
@@ -212,7 +200,8 @@ class SyncApiClient(object):
             self._log.error('illegal Authentication-Info header: {}', authinfo)
             return False
         signature = base64.decode(options['signature'])
-        cb = self.connection.transport.ssl.get_channel_binding('tls-unique')
+        sslinfo = self.client.connection[0].get_extra_info('sslinfo')
+        cb = sslinfo.get_channel_binding('tls-unique')
         check = crypto.hmac(adjust_pin(pin, -1).encode('ascii'), cb, 'sha1')
         if check != signature:
             self._log.error('HMAC_CB signature did not match')
@@ -225,7 +214,7 @@ class SyncApiClient(object):
         If succesful, this returns a key exchange ID. On error, a SyncApiError
         exception is raised.
         """
-        if self.connection is None:
+        if self.client is None:
             raise RuntimeError('Not connected')
         url = '/api/vaults/%s/pair' % uuid
         headers = [('Authorization', 'HMAC_CB name=%s' % name)]
@@ -252,9 +241,11 @@ class SyncApiClient(object):
         If successfull, this returns the peer certificate. On error, a
         SyncApiError is raised.
         """
-        if self.connection is None:
+        if self.client is None:
             raise RuntimeError('Not connected')
         url = '/api/vaults/%s/pair' % uuid
+        # XXX: wait until SSL is up
+        gruvi.sleep(0.1)
         headers = self._get_hmac_cb_auth(kxid, pin)
         response = self._make_request('POST', url, headers, certinfo)
         if response is None:
@@ -272,7 +263,8 @@ class SyncApiClient(object):
 
     def _get_rsa_cb_auth(self, uuid, model):
         """Return the headers for RSA_CB authentication."""
-        cb = self.connection.transport.ssl.get_channel_binding('tls-unique')
+        sslinfo = self.client.connection[0].get_extra_info('sslinfo')
+        cb = sslinfo.get_channel_binding('tls-unique')
         privkey = model.get_auth_key(uuid)
         assert privkey is not None
         signature = crypto.rsa_sign(cb, privkey, 'pss-sha1')
@@ -295,13 +287,14 @@ class SyncApiClient(object):
                 or not uuid4.check(options['node']):
             self._log.error('illegal Authentication-Info header')
             return False
-        cb = self.connection.transport.ssl.get_channel_binding('tls-unique')
+        sslinfo = self.client.connection[0].get_extra_info('sslinfo')
+        cb = sslinfo.get_channel_binding('tls-unique')
         signature = base64.decode(options['signature'])
         cert = model.get_certificate(uuid, options['node'])
         if cert is None:
             self._log.error('unknown node {} in RSA_CB authentication', node)
             return False
-        pubkey = base64.decode(cert['payload']['keys']['auth']['key'])
+        pubkey = base64.decode(cert['keys']['auth']['public'])
         try:
             status = crypto.rsa_verify(cb, signature, pubkey, 'pss-sha1')
         except crypto.Error:
@@ -311,9 +304,9 @@ class SyncApiClient(object):
             self._log.error('RSA_CB signature did not match')
         return status
 
-    def sync(self, uuid, model, notify=True):
+    def sync(self, uuid, model):
         """Synchronize vault `uuid` with the remote peer."""
-        if self.connection is None:
+        if self.client is None:
             raise RuntimeError('Not connected')
         vault = model.get_vault(uuid)
         if vault is None:
@@ -321,6 +314,7 @@ class SyncApiClient(object):
         vector = model.get_vector(uuid)
         vector = dump_vector(vector)
         url = '/api/vaults/%s/items?vector=%s' % (vault['id'], vector)
+        gruvi.sleep(0.1)  # XXX: wait for ssl handshake
         headers = self._get_rsa_cb_auth(uuid, model)
         response = self._make_request('GET', url, headers)
         if not response:
@@ -334,7 +328,7 @@ class SyncApiClient(object):
         initems = response.entity
         if initems is None or not isinstance(initems, list):
             raise SyncApiError('Illegal syncapi response')
-        nitems = model.import_items(uuid, initems, notify=notify)
+        nitems = model.import_items(uuid, initems)
         self._log.debug('imported {} items into model', nitems)
         vector = response.get_header('X-Vector', '')
         try:
@@ -482,6 +476,11 @@ class SyncApiApplication(WSGIApplication):
         self.allow_pairing = False
         self.key_exchanges = {}
 
+    def _get_tls_unique_cb(self):
+        transport = self.environ['gruvi.transport']
+        sslinfo = transport.get_extra_info('sslinfo')
+        return sslinfo.get_channel_binding('tls-unique')
+
     def _do_auth_hmac_cb(self, uuid):
         """Perform mutual HMAC_CB authentication."""
         wwwauth = create_option_header('HMAC_CB', realm=uuid)
@@ -504,12 +503,11 @@ class SyncApiApplication(WSGIApplication):
             bus = instance(ControlApiServer)
             kxid = crypto.random_cookie()
             pin = '{0:06d}'.format(crypto.random_int(1000000))
-            for client in bus.clients:
+            for _, protocol in bus.connections:
                 # XXX: revise this
-                if not getattr(client, '_ctrlapi_authenticated', False):
+                if not getattr(protocol, '_ctrlapi_authenticated', False):
                     continue
-                approved = bus.call_method(client, 'get_pairing_approval',
-                                           name, uuid, pin, kxid)
+                approved = protocol.call_method('get_pairing_approval', name, uuid, pin, kxid)
                 break
             if not approved:
                 raise HTTPReturn('403 Approval Denied')
@@ -530,14 +528,16 @@ class SyncApiApplication(WSGIApplication):
             now = time.time()
             if now - starttime > 60:
                 raise HTTPReturn('403 Request Timeout')
-            cb = self.environ['SSL_CHANNEL_BINDING_TLS_UNIQUE']
+            cb = self._get_tls_unique_cb()
+            print("CB", repr(cb))
+            print("PIN", pin)
             check = crypto.hmac(adjust_pin(pin, +1).encode('ascii'), cb, 'sha1')
             if check != signature:
                 raise HTTPReturn('403 Invalid PIN')
             from bluepass.ctrlapi import ControlApiServer
             bus = instance(ControlApiServer)
-            for client in bus.clients:
-                bus.send_notification(client, 'PairingComplete', kxid)
+            for _, protocol in bus.connections:
+                protocol.send_notification('PairingComplete', kxid)
             # Prove to the other side we also know the PIN
             signature = crypto.hmac(adjust_pin(pin, -1).encode('ascii'), cb, 'sha1')
             signature = base64.encode(signature)
@@ -568,8 +568,8 @@ class SyncApiApplication(WSGIApplication):
         if cert is None:
             raise HTTPReturn(http.UNAUTHORIZED, headers)
         signature = base64.decode(opts['signature'])
-        pubkey = base64.decode(cert['payload']['keys']['auth']['key'])
-        cb = self.environ['SSL_CHANNEL_BINDING_TLS_UNIQUE']
+        pubkey = base64.decode(cert['keys']['auth']['public'])
+        cb = self._get_tls_unique_cb()
         if not crypto.rsa_verify(cb, signature, pubkey, 'pss-sha1'):
             raise HTTPReturn(http.UNAUTHORIZED, headers)
         # The peer was authenticated. Authenticate ourselves as well.
@@ -595,15 +595,10 @@ class SyncApiApplication(WSGIApplication):
         certinfo = self.entity
         if not certinfo or not isinstance(certinfo, dict):
             raise HTTPReturn(http.BAD_REQUEST)
-        model.add_certificate(uuid, certinfo)
+        model.create_certificate(uuid, certinfo)
         # And send our own certificate request in return
-        certinfo = { 'node': vault['node'], 'name': socket.gethostname() }
-        certkeys = certinfo['keys'] = {}
-        vault = model.vaults[vault['id']]  # access 'keys'
-        for key in vault['keys']:
-            certkeys[key] = { 'key': vault['keys'][key]['public'],
-                              'keytype': vault['keys'][key]['keytype'] }
-        certinfo['restrictions'] = {}
+        certinfo = { 'node': vault['node'], 'name': util.gethostname() }
+        certinfo['keys'] = model.get_public_keys(vault['id'])
         return certinfo
 
     @expose('/api/vaults/:vault/items', method='GET')
@@ -651,23 +646,11 @@ class SyncApiServer(HttpServer):
         handler = singleton(SyncApiApplication)
         super(SyncApiServer, self).__init__(handler)
 
-    def _get_environ(self, transport, message):
-        env = super(SyncApiServer, self)._get_environ(transport, message)
-        env['SSL_CIPHER'] = transport.ssl.cipher()
-        cb = transport.ssl.get_channel_binding('tls-unique')
-        env['SSL_CHANNEL_BINDING_TLS_UNIQUE'] = cb
-        return env
-
     def listen(self, address):
+        context = gruvi.create_ssl_context(ciphers='ADH+AES')
         dhparams = util.asset('pem', 'dhparams.pem')
-        if compat.PY3:
-            context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
-            context.set_ciphers('ADH+AES')
-            context.load_dh_params(dhparams)
-            sslargs = {'context': context}
-        else:
-            sslargs = {'ciphers': 'ADH+AES', 'dh_params': dhparams}
-        super(SyncApiServer, self).listen(address, ssl=True, **sslargs)
+        context.load_dh_params(dhparams)
+        super(SyncApiServer, self).listen(address, ssl=context)
 
 
 class SyncApiPublisher(Fiber):
@@ -681,7 +664,7 @@ class SyncApiPublisher(Fiber):
     """
 
     def __init__(self, server):
-        super(SyncApiPublisher, self).__init__(target=self._run)
+        super(SyncApiPublisher, self).__init__(target=self._run, name='SyncApiPublisher')
         self.server = server
         self.queue = gruvi.Queue()
         self.published_nodes = set()
@@ -711,7 +694,7 @@ class SyncApiPublisher(Fiber):
         self.queue.put((event, args))
 
     def _get_hostname(self):
-        name = socket.gethostname()
+        name = util.gethostname()
         pos = name.find('.')
         if pos != -1:
             name = name[:pos]
@@ -727,7 +710,7 @@ class SyncApiPublisher(Fiber):
         nodename = self._get_hostname()
         vaults = model.get_vaults()
         for vault in vaults:
-            addr = gruvi.getsockname(self.server.transport)
+            addr = self.server.addresses[0]
             locator.register(vault['node'], nodename, vault['id'], vault['name'], addr)
             log.debug('published node {}', vault['node'])
             self.published_nodes.add(vault['node'])
@@ -735,7 +718,10 @@ class SyncApiPublisher(Fiber):
         while not stopped:
             timeout = self.allow_pairing_until - time.time() \
                         if self.allow_pairing else None
-            entry = self.queue.get(timeout)
+            try:
+                entry = self.queue.get(timeout=timeout)
+            except QueueEmpty:
+                entry = None
             if entry:
                 event, args = entry
                 log.debug('processing event: {}', event)
@@ -757,7 +743,7 @@ class SyncApiPublisher(Fiber):
                             log.debug('make node {} invisible (user)', node)
                         instance(SyncApiApplication).allow_pairing = False
                         self.raise_event('AllowPairingEnded')
-                elif event == 'VaultAdded':
+                elif event == 'VaultCreated':
                     vault = args[0]
                     node = vault['node']
                     if node in self.published_nodes:
@@ -766,12 +752,12 @@ class SyncApiPublisher(Fiber):
                     properties = {}
                     if self.allow_pairing:
                         properties['visible'] = 'true'
-                    addr = gruvi.getsockname(self.server.transport)
+                    addr = self.server.addresses[0]
                     locator.register(node, nodename, vault['id'], vault['name'],
                                      addr, properties)
                     self.published_nodes.add(node)
                     log.debug('published node {}', node)
-                elif event == 'VaultRemoved':
+                elif event == 'VaultDeleted':
                     vault = args[0]
                     node = vault['node']
                     if node not in self.published_nodes:

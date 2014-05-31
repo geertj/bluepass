@@ -153,14 +153,15 @@ class EditPasswordDialog(QDialog):
     @Slot(str, dict)
     def editPassword(self, vault, version):
         self.combobox.clear()
-        group = version.get('group', '')
+        fields = version.setdefault('fields', {})
+        group = fields.get('group', '')
         for name in self.groups.get(vault, []):
             self.combobox.addItem(name)
         self.setGroup(group)
         for field in self.fields:
             getvalue, setvalue = self.fields[field]
             if setvalue:
-                setvalue(version.get(field, ''))
+                setvalue(fields.get(field, ''))
         if version.get('id'):
             self.setWindowTitle('Edit Password')
             self.savebtn.setText('Save')
@@ -174,23 +175,24 @@ class EditPasswordDialog(QDialog):
 
     @Slot()
     def savePassword(self):
-        version = self.version.copy()
+        version = {}
+        fields = version['fields'] = {}
         for field in self.fields:
             getvalue, setvalue = self.fields[field]
-            version[field] = getvalue()
+            fields[field] = getvalue()
         qapp = QApplication.instance()
         backend = qapp.backend()
         mainwindow = qapp.mainWindow()
-        if version.get('id'):
+        if self.version.get('id'):
             try:
-                backend.replace_version(self.vault, version)
+                backend.update_secret(self.vault, self.version['id'], version)
             except ControlApiError as e:
                 mainwindow.showMessage('Could not update password: %s' % str(e))
             else:
                 mainwindow.showMessage('Password updated successfully')
         else:
             try:
-                backend.add_version(self.vault, version)
+                backend.create_secret(self.vault, version)
             except ControlApiError as e:
                 mainwindow.showMessage('Could not add password: %s' % str(e))
             else:

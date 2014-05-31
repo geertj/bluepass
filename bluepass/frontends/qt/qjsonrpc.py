@@ -21,8 +21,7 @@ from gruvi import jsonrpc
 from bluepass import platform, util, logging
 
 
-__all__ = ['QJsonRpcError', 'QJsonRpcClient', 'QJsonRpcHandler', 'request',
-           'notification']
+__all__ = ['QJsonRpcError', 'QJsonRpcClient']
 
 # re-export these to our consumers as module-level objects
 from gruvi.jsonrpc import (create_request, create_response, create_error,
@@ -60,7 +59,7 @@ class QJsonRpcClient(QObject):
         self._outbuf = b''
         self._incoming = collections.deque()
         self._outgoing = collections.deque()
-        self._parser = jsonrpc.JsonRpcParser()
+        self._protocol = jsonrpc.JsonRpcProtocol(True)
         self._read_notifier = None
         self._write_notifier = None
         self._log = logging.get_logger(self)
@@ -71,7 +70,10 @@ class QJsonRpcClient(QObject):
 
     def connect(self, address):
         """Connect to a JSON-RPC server at *address*."""
-        sock = util.create_connection(address, self._timeout)
+        if isinstance(address, socket.socket):
+            sock = address
+        else:
+            sock = util.create_connection(address, self._timeout)
         sock.settimeout(0)
         self._read_notifier = QSocketNotifier(sock.fileno(), QSocketNotifier.Read, self)
         self._read_notifier.activated.connect(self._do_read)
@@ -97,15 +99,15 @@ class QJsonRpcClient(QObject):
                 self._log.error('peer closed connection')
                 self.close()
                 break
-            nbytes = self._parser.feed(buf)
-            if nbytes != len(buf):
-                self._log.error('parse error {0}'.format(self._parser.error))
+            # XXX: should not be using protocol private attributes
+            # Expose .error and .get_message() ?
+            nbytes = self._protocol.data_received(buf)
+            if self._protocol._error:
+                self._log.error('parse error {0!s}', self._protocol._error)
                 self.close()
                 break
-            while True:
-                message = self._parser.pop_message()
-                if not message:
-                    break
+            while self._protocol._queue.qsize():
+                message = self._protocol._queue.get(block=False)
                 self._incoming.append(message)
         # Schedule a dispatch if there are incoming messages
         if self._incoming:
@@ -187,8 +189,9 @@ class QJsonRpcClient(QObject):
 
     def call_method(self, method, *args, **kwargs):
         """Call a method."""
-        if self._method_calls:
-            raise RuntimeError('recursive call_method() detected')
+        # XXX: limiting the recusion depth needs more thought
+        if len(self._method_calls) > 5:
+            raise RuntimeError('recursion level too deep')
         message = jsonrpc.create_request(method, args)
         self.send_message(message)
         replies = []
@@ -206,8 +209,8 @@ class QJsonRpcClient(QObject):
             timer.timeout.connect(method_timeout)
             timer.start()
         # Run an embedded event loop to process network events until we get a
-        # response. We allow only one concurrent call so that we don't run the
-        # risk of overflowing the stack.
+        # response. We limit the call depth so that we don't run the risk of
+        # overflowing the stack.
         self._method_calls[message['id']] = method_response
         loop = QEventLoop()
         mask = QEventLoop.ExcludeUserInputEvents | QEventLoop.WaitForMoreEvents
@@ -223,83 +226,3 @@ class QJsonRpcClient(QObject):
             raise QJsonRpcError(reply['error'])
         self.message = reply
         return reply.get('result')
-
-
-def request(name=None):
-    """Return a decorator that marks a function as a request handler."""
-    def decorate(handler):
-        handler.request = True
-        handler.name = name or handler.__name__
-        return handler
-    return decorate
-
-def notification(name=None):
-    """Return a decorator that marks a function as a notification handler."""
-    def decorate(handler):
-        handler.notification = True
-        handler.name = name or handler.__name__
-        return handler
-    return decorate
-
-
-class QJsonRpcHandler(object):
-    """An object based message handler.
-
-    Methods on instances can be decorated with :func:`request` or
-    :func:`notification` to mark them as request and notificaiton handlers
-    respectively.
-    """
-
-    def __init__(self):
-        self._request_handlers = []
-        self._notification_handlers = []
-        self._init_handlers()
-
-    def _init_handlers(self):
-        for sym in dir(self):
-            handler = getattr(self, sym)
-            if getattr(handler, 'request', False):
-                self._request_handlers.append(handler)
-            elif getattr(handler, 'notification', False):
-                self._notification_handlers.append(handler)
-
-    def __call__(self, message, client):
-        method = message.get('method')
-        if not method:
-            return
-        is_request = (message.get('id') is not None)
-        if is_request:
-            handlers = self._request_handlers
-        else:
-            handlers = self._notification_handlers
-        handlers_found = 0
-        for handler in handlers:
-            if not fnmatch.fnmatch(method, handler.name):
-                continue
-            handlers_found += 1
-            args = message.get('params', ())
-            self.message = message
-            self.client = client
-            self.send_response = True
-            result = exc = None
-            try:
-                result = handler(*args)
-            except Exception as e:
-                client._log.exception('uncaught exception in handler')
-                exc = e
-            self.message = None
-            self.client = None
-            if not is_request:
-                continue
-            if exc:
-                response = jsonrpc.create_error(message, jsonrpc.INTERNAL_ERROR)
-            elif self.send_response:
-                response = jsonrpc.create_response(message, result)
-            else:
-                response = None
-            if response:
-                client.send_message(response)
-            break
-        if is_request and handlers_found == 0:
-            error = jsonrpc.create_error(message, jsonrpc.METHOD_NOT_FOUND)
-            client.send_message(error)

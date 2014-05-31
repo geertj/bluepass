@@ -99,13 +99,12 @@ class Syncer(Fiber):
                     # are discovered while we are running, because we known
                     # that when they are started up they will sync with us.
                     self.last_sync[neighbor['node']] = now
-                elif event == 'VersionsAdded':
-                    vault, versions = args
+                elif event == 'ItemsAdded':
+                    vault, vec = args
                     # As an optimization, only push out a list of added
                     # versions in case it is generated locally, because we know
                     # the originator will push the update to everybody else.
-                    for version in versions:
-                        item = model.get_version_item(vault, version['id'])
+                    for item in model.get_items(vault, vec):
                         if item['origin']['node'] not in mynodes:
                             continue
                         self._log.debug('local update, syncing to all nodes for vault {}', vault)

@@ -32,9 +32,9 @@ class Bluepass(QApplication):
 
     def exec_(self):
         ctrlapi = instance(ControlApiClient)
-        config = ctrlapi.get_config('qt')
+        config = ctrlapi.get_config('frontends.qt')
         if config is None:
-            config = ctrlapi.create_config({'name': 'qt'})
+            config = ctrlapi.create_config({'name': 'frontends.qt'})
         self._config = config
         mainwindow = singleton(MainWindow)
         mainwindow.show()
@@ -53,7 +53,7 @@ class Bluepass(QApplication):
 
     def update_config(self, config):
         self._config = config
-        self.backend().update_config(config)
+        self.backend().update_config('frontends.qt', config)
 
     def copyToClipboard(self, text, timeout=None):
         clipboard = self.clipboard()

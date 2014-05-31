@@ -15,7 +15,7 @@ import binascii
 from collections import namedtuple
 
 from bluepass.platform import PlatformError
-from .platform_ffi import lib as _lib
+from bluepass.platform_ffi import lib as _lib
 
 __all__ = ['disable_debugging', 'lock_all_memory', 'get_process_info', 'get_peer_info']
 

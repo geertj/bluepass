@@ -10,6 +10,7 @@ from __future__ import absolute_import, print_function
 
 import sys
 
+import gruvi
 from bluepass import util
 from bluepass.factory import singleton
 from bluepass.component import Component
@@ -38,7 +39,7 @@ class QtFrontend(Component):
         args += map(lambda o: '-{0}'.format(o.strip()), qt_options.split(','))
         app = singleton(Bluepass, args)
 
-        addr = util.paddr(self.options.connect)
+        addr = gruvi.paddr(self.options.connect)
         ctrlapi = singleton(ControlApiClient)
         ctrlapi.connect(addr)
         ctrlapi.login(self.options.auth_token)

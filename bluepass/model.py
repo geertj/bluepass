@@ -10,12 +10,14 @@ from __future__ import absolute_import, print_function
 
 import time
 import itertools
+from copy import deepcopy
 
+import six
 import gruvi
-from gruvi import compat
 
 from . import base64, json, logging, validate, crypto, util
 from .errors import *
+from .skiplist import *
 
 __all__ = ['Model', 'ModelError', 'VaultLocked', 'InvalidPassword']
 
@@ -35,7 +37,7 @@ class InvalidPassword(ModelError):
 va_config = validate.compile('{ name: str@>0, ... }')
 
 va_token = validate.compile("""
-        { id: str@>=20, expires: int>=0, rights:
+        { id: str@>=20, expires: float>=0, allow:
             { control_api: *bool, client_api: *bool } }
         """)
 
@@ -43,113 +45,185 @@ va_vault = validate.compile("""
         { id: uuid, name: str@>0@<=100, node: uuid, keys:
             { sign:
                 { keytype: str="rsa", private: b64@>=16, public: b64@>=16, encinfo:
-                    { algo: str="aes-cbc-pkcs7", iv: b64@>=16, kdf:str="pbkdf2-hmac-sha1",
-                      salt: b64@>=16, count: int>0, length: int>0 },
+                    *{ algo: str="aes-cbc-pkcs7", iv: b64@>=16, kdf:str="pbkdf2-hmac-sha1",
+                       salt: b64@>=16, count: int>0, length: int>0 },
                   pwcheck:
-                    { algo: str="hmac-random-sha256", random: b64@>=16, verifier: b64@>=16 } }
+                    *{ algo: str="hmac-sha256-random", random: b64@>=16, verifier: b64@>=16 } }
               encrypt:
                 { keytype: str="rsa", private: b64@>=16, public: b64@>=16, encinfo:
-                    { algo: str="aes-cbc-pkcs7", iv: b64@>=16, kdf:str="pbkdf2-hmac-sha1",
-                      salt: b64@>=16, count: int>0, length: int>0 },
+                    *{ algo: str="aes-cbc-pkcs7", iv: b64@>=16, kdf:str="pbkdf2-hmac-sha1",
+                       salt: b64@>=16, count: int>0, length: int>0 },
                   pwcheck:
-                    { algo: str="hmac-random-sha256", random: b64@>=16, verifier: b64@>=16 } }
+                    *{ algo: str="hmac-sha256-random", random: b64@>=16, verifier: b64@>=16 } }
               auth:
-                { keytype: str="rsa", private: b64@>=16, public: b64@>=16, encinfo:
-                    { algo: str="plain" } } } }
+                { keytype: str="rsa", private: b64@>=16, public: b64@>=16 } } }
         """)
 
-va_vault_update = validate.compile('{name: str@>0@<=100}')
+va_vault_tmpl = validate.compile('{id: *uuid, name: str@>0@<=100, password: str@<=100}')
+va_vault_upd = validate.compile('{name: *str@>0@<=100, password: *str@>0@<=100}')
 
 va_item = validate.compile("""
         { id: uuid, type: str="Item", vault: uuid,
           origin: { node: uuid, seqnr: int>=0 },
-          payload: { type: str="Certificate"|="EncryptedItem", ... }
+          payload: { type: str="Certificate"|="Encrypted", ... }
           signature: { algo: str="rsa-pss-sha256", blob: b64@>=16 } }
         """)
 
 va_cert = validate.compile("""
         { id: uuid, payload:
             {  id: uuid, type:str="Certificate", node: uuid, name: str@>0@<=100, keys:
-                { sign: { key: b64, keytype: str="rsa" },
-                  encrypt: { key: b64, keytype: str="rsa" },
-                  auth: { key: b64, keytype: str="rsa" } }
-               restrictions: { synconly: *bool } }, ... }
+                { sign: *{ public: b64, keytype: str="rsa" },
+                  encrypt: *{ public: b64, keytype: str="rsa" },
+                  auth: *{ public: b64, keytype: str="rsa" } } }, ... }
         """)
-
-va_encitem = validate.compile("""
-        { id: uuid, payload:
-            { type: str="EncryptedItem", algo: str="aes-cbc-pkcs7",
-              iv: b64@>=16 blob: b64@>=2, keyalgo: str="rsa-oaep", keys: {...} }, ... }
-        """)
-
-# XXX: Check encitems/payload/keys: uuid -> b64
-
-va_decitem = validate.compile("""
-        { id: uuid, payload: { id: uuid, type: str="Version", ... }, ... }
-        """)
-
-va_version = validate.compile("""
-        { id: uuid, payload:
-            { id: uuid, type: str="Version", parent: *uuid, deleted: *bool,
-              created_at: int>=0, version: { id: uuid, ... } }, ... }
-        """)
-
-va_certinfo = validate.compile("""
+va_cert_tmpl = validate.compile("""
         { node: uuid, name: str@>0@<=100, keys:
-            { sign: { key: b64@>=16, keytype: str="rsa" },
-              encrypt: { key: b64@>=16, keytype: str="rsa" },
-              auth: { key: b64@>=16, keytype: str="rsa" } }
-          restrictions: { synconly: *bool } }
+            { sign: *{ public: b64, keytype: str="rsa" },
+              encrypt: *{ public: b64, keytype: str="rsa" },
+              auth: *{ public: b64, keytype: str="rsa" } } }
         """)
 
+
+va_enc = validate.compile("""
+        { id: uuid, payload:
+            { type: str="Encrypted", algo: str="aes-cbc-pkcs7", iv: b64@>=16,
+              blob: b64@>=2, keyalgo: str="rsa-oaep", keys: { ... } }, ... }
+        """)
+# XXX: implement this extra validation
+#va_enc.add('/payload/keys/*', '[uuid, b64@>=16]')
+
+va_secret = validate.compile("""
+        { id: uuid, payload:
+            { id: uuid, type: str="Secret", parent: *uuid, created_at: float>=0,
+              deleted: *bool, version: uuid, fields: { ... } }, ... }
+        """)
+va_secret_tmpl = validate.compile('{ fields: { ... } }')
+
+va_vector = validate.compile('[...]')
+# XXX: implement this extra validation
+#va_vector.add('/[*]', '[uuid, int>=0]')
+
+
+# Utility functions
 
 def filter_dict(d, include=None, exclude=None):
-    """Filter keys from a dict (or list of dicts)."""
+    """Filter a dictionary, or a list of dictionaries, in-place.
+
+    If *include* is specified, it must be a sequence and only keys in the
+    sequence will be be in the result. If *exclude* is specified, it must be a
+    sequence and all keys not in the sequence will be in the result. If neither
+    are specified, all keys will be in the result.
+    """
     if d is None:
         return
-    elif isinstance(d, list):
-        return [filter_dict(elem, include, exclude) for elem in d]
-    res = {}
-    for key in d:
-        if include is not None:
-            if key in include:
-                res[key] = d[key]
-        elif exclude is not None:
-            if key not in exclude:
-                res[key] = d[key]
-    return res
+    elif isinstance(d, dict):
+        for key in list(d):
+            if include is not None and key not in include or \
+                    exclude is not None and key in exclude:
+                del d[key]
+    else:
+        raise TypeError('d: expecting dict, got {0.__name_!r}', type(d))
 
-def filter_vault(vault):
-    """Filter unnecessary information from a vault object."""
-    return filter_dict(vault, exclude=('keys',))
+
+def copy_dict(d, include=None, exclude=None):
+    """Like :func:`filter_dict`, but creates a deep copy of the dict."""
+    d = deepcopy(d)
+    if include or exclude:
+        filter_dict(d, include, exclude)
+    return d
+
+
+def update_dict(d, update, include=None, exclude=None):
+    """Update dictionary *d* with updates from *update*.
+
+    The *include* and *exclude* parameters have the same meaning as in
+    :meth:`filter_dict`.
+    """
+    for key,value in update.items():
+        if include is not None and key not in include or \
+                exclude is not None and key in exclude:
+            continue
+        if key in d:
+            if isinstance(d[key], dict) and isinstance(value, dict):
+                update_dict(d[key], value)
+            elif value is not None:
+                d[key] = value
+            else:
+                del d[key]
+        elif value is not None:
+            d[key] = value
+
+
+def abbr(uuid):
+    """Abbreviate a UUID."""
+    if uuid is None:
+        return '(none)'
+    elif isinstance(uuid, six.string_types):
+        return '{0:.6}..'.format(uuid)
+    else:
+        return '(invalid)'
 
 
 class Model(object):
-    """This class implements our vault/item model on top of a document
-    store."""
+    """This class implements our data model on top of a document store.
+
+    The model contains the following types:
+
+    * config: A simple configuration document that front-ends can use to store
+        persistent configuration.
+    * token: An access token that grants persistent (or not) rights to access
+        one of the APIs.
+    * vault: The unit of replication and a container for items. A vault can be
+        shared with multiple instances of Bluepass. Each instance is identified
+        by a unique node ID. Every node has a unique set of keys for each
+        vault: an authentication key, an signing key and an encryption key.
+    * item: The elements in a vault. Items have meta data to aid in replication
+        (origin node and sequence number), and always have a signature.
+        Currently there are two types of items: a certificate  and a secret.
+        Certificates are not encrypted while secrets are. Items are never
+        changed once created. They are added to a vault in an append-only
+        fashion.
+    * certificate: A type of item. A certificate binds a node ID to its public
+        keys. Each item requires a signature by a public key for which there is
+        a trusted certificate chain.
+    * secret: A type of item. The item is encrypted, and supports version
+        control and confict resolution.
+    """
 
     def __init__(self, store):
         """Create a new model on top of *store*."""
-        self.store = store
-        self._tokens = {}
-        self.vaults = {}
-        self._log = logging.get_logger(self)
+        self._store = store
+        self._vaults = {}
         self._next_seqnr = {}
-        self._private_keys = {}
+        self._decrypted_keys = {}
         self._trusted_certs = {}
-        self._version_cache = {}
+        self._secret_index = {}
+        self._secret_cache = {}
+        self._cached_fields = {}
         self._linear_history = {}
         self._full_history = {}
-        self.callbacks = []
-        self._update_schema()
-        self._load_tokens()
+        self._callbacks = []
+        self._log = logging.get_logger()
+        self._check_schema()
         self._load_vaults()
+        for vault in self._vaults:
+            self._load_certificates(vault)
+        self._expire_tokens()
 
-    def _update_schema(self):
-        """Create or update the document store."""
+    @property
+    def store(self):
+        return self._store
+
+    @property
+    def callbacks(self):
+        return self._callbacks
+
+    def _check_schema(self):
+        """Make sure the store schema is up to date."""
         store = self.store
         if 'configs' not in store.collections:
             store.create_collection('configs')
+            store.create_index('configs', '$name', 'TEXT', 'UNIQUE')
         if 'tokens' not in store.collections:
             store.create_collection('tokens')
         if 'vaults' not in store.collections:
@@ -159,318 +233,355 @@ class Model(object):
             store.create_index('items', '$vault', 'TEXT')
             store.create_index('items', '$origin$node', 'TEXT')
             store.create_index('items', '$origin$seqnr', 'INT')
+            store.create_index('items', '$payload$node', 'TEXT')
             store.create_index('items', '$payload$type', 'TEXT')
 
-    def _load_tokens(self):
-        """Load all tokens."""
-        total = invalid = 0
-        tokens = self.store.findall('tokens')
-        for token in tokens:
-            total += 1
-            vres = va_token.validate(token)
-            if not vres.match:
-                self._log.error('Invalid token "{}": {}', token, vres.error)
-                invalid += 1
-                continue
-            self._tokens[token['id']] = token
-        self._log.info('Database contains {} tokens ({} invalid)', total, invalid)
-
-    def _check_items(self, vault):
-        """Check all items in a vault."""
-        total = errors = 0
-        items = self.store.findall('items', '$vault = ?', (vault,))
-        self._log.debug('Checking all items in vault "{}"', vault)
-        for item in items:
-            uuid = item.get('id', '<no id>')
-            vres = va_item.validate(item)
-            if not vres:
-                self._log.error('Invalid item "{}": {}', uuid, vres.errors[0])
-                errors += 1
-                continue
-            typ = item['payload']['type']
-            if typ == 'Certificate':
-                vres = va_cert.validate(item)
-                if not vres:
-                    self._log.error('Invalid certificate "{}": {}', uuid, vres.errors[0])
-                    errors += 1
-                    continue
-            elif typ == 'EncryptedItem':
-                vres = va_encitem.validate(item)
-                if not vres:
-                    self._log.error('Invalid encrypted item "{}": {}', uuid, vres.errors[0])
-                    errors += 1
-                    continue
-            else:
-                self_log.error('Unknown payload type "{}" in item "{}"', typ, item['id'])
-                continue
-            total += 1
-        self._log.debug('Vault "{}" contains {} items and {} errors', vault, total, errors)
-        return errors == 0
-
-    def _load_vault(self, vault):
-        """Check and load a single vault."""
-        uuid = vault.get('id', '<no id>')
-        vres = va_vault.validate(vault)
-        if not vres:
-            self._log.error('Vault "{}" has errors (skipping): {}', uuid, vres.errors[0])
-            return False
-        uuid = vault['id']
-        if not self._check_items(vault['id']):
-            self._log.error('Vault {} has items with errors, skipping', uuid)
-            return False
-        self.vaults[uuid] = vault
-        self._private_keys[uuid] = []
-        self._version_cache[uuid] = {}
-        self._linear_history[uuid] = {}
-        self._full_history[uuid] = {}
-        seqnr = self.store.execute('items', """
-                SELECT MAX($origin$seqnr)
-                FROM items
-                WHERE $origin$node = ? AND $vault = ?
-                """, (vault['node'], vault['id']))
-        if seqnr:
-            self._next_seqnr[uuid] = seqnr[0][0] + 1
-        else:
-            self._next_seqnr[uuid] = 0
-        self._log.debug('Succesfully loaded vault "{}" ({})', uuid, vault['name'])
-        return True
+    # Load objects 
 
     def _load_vaults(self):
         """Check and load all vaults."""
-        total = errors = 0
-        filename = self.store.filename
-        self._log.debug('loading all vaults from store {}', filename)
+        errors = 0
+        self._log.info('loading vaults')
         vaults = self.store.findall('vaults')
         for vault in vaults:
-            total += 1
-            if not self._load_vault(vault):
+            uuid = vault.get('id')
+            vres = va_vault.validate(vault)
+            if vres.error:
+                self._log.error('vault {!r} error: {!r}', abbr(uuid), vres.error)
                 errors += 1
                 continue
-            self._calculate_trust(vault['id'])
-        self._log.debug('successfully loaded {} vaults, {} vaults had errors',
-                        total-errors, errors)
+            self._vaults[uuid] = vault
+            self._decrypted_keys[uuid] = {}
+            key = self._decrypt_vault_key(vault['keys']['auth'], '')
+            self._decrypted_keys[uuid]['auth'] = key
+            self._secret_index[uuid] = {}
+            self._secret_cache[uuid] = SkipList()
+            self._cached_fields[uuid] = set()
+            self._linear_history[uuid] = {}
+            self._full_history[uuid] = {}
+            result = self.store.execute("""
+                    SELECT MAX($origin$seqnr)
+                    FROM items
+                    WHERE $origin$node = ? AND $vault = ?
+                    """, (vault['node'], vault['id']))
+            self._next_seqnr[uuid] = result[0][0] + 1 if result[0][0] else 1
+            self._log.debug('loaded vault {!r}', abbr(uuid))
+        self._log.info('loaded {} vaults, skipped {}', len(self._vaults), errors)
 
-    def _verify_signature(self, item, pubkey):
-        """Verify the signature on an item."""
-        assert va_item.match(item)
-        signature = item.pop('signature')
-        if signature['algo'] != 'rsa-pss-sha256':
-            self._log.error('unknown signature algo "{}" for item "{}"', algo, item['id'])
-            return False
-        message = json.dumps_c14n(item).encode('utf8')
-        blob = base64.decode(signature['blob'])
-        try:
-            status = crypto.rsa_verify(message, blob, pubkey, 'pss-sha256')
-        except crypto.Error:
-            log.error('garbage in signature for item "%s"', item['id'])
-            return False
-        if not status:
-            log.error('invalid signature for item "%s"', item['id'])
-            return False
-        item['signature'] = signature
-        return True
-
-    def __collect_certs(self, node, nodekey, certs, result, depth):
-        """Collect valid certificates."""
-        if node not in certs:
-            return
-        result[node] = []
-        for cert in certs[node]:
+    def __collect_certs(self, node, nodekey, certs, result):
+        """Collect certificates that have a signature chain back to a node."""
+        for cert in certs.pop(node, []):
             if not self._verify_signature(cert, nodekey):
                 continue
-            synconly = cert['payload'].get('restrictions', {}).get('synconly', False)
-            subject = cert['payload']['node']
-            subjkey = base64.decode(cert['payload']['keys']['sign']['key'])
-            if node == subject:
-                # self-signed certificate
-                result[node].append((depth+1+synconly*100, cert))
-            else:
-                result[node].append((depth+2+synconly*100, cert))
-            if subject in result:
-                # There are loops in the "signed by" graph because during
-                # pairing nodes sign each other's key.
+            result.append(cert)
+            payload = cert['payload']
+            key = payload['keys'].get('sign')
+            if not key:
                 continue
-            if synconly:
-                # Synconly certs are not allowed to sign items
-                continue
-            self.__collect_certs(subject, subjkey, certs, result, depth+2)
+            subj = payload['node']
+            subjkey = base64.decode(key['public'])
+            self.__collect_certs(subj, subjkey, certs, result)
 
-    def _calculate_trust(self, vault):
-        """Calculate a list of trusted certificates."""
-        assert vault in self.vaults
-        # Create mapping of certificates by their signer
+    def _load_certificates(self, vault):
+        """Load certificates and determine list of trusted nodes."""
+        assert vault in self._vaults
+        self._log.info('loading certificates for vault {!r}', abbr(vault))
+        # Create a mapping of certificates by their signer
         certs = {}
         query = "$vault = ? AND $payload$type = 'Certificate'"
-        result = self.store.findall('items', query, (vault,))
-        for cert in result:
-            assert va_item.match(cert)
-            signer = cert['origin']['node']
-            try:
-                certs[signer].append(cert)
-            except KeyError:
-                certs[signer] = [cert]
+        items = self.store.findall('items', query, (vault,))
+        for cert in items:
+            vres = va_cert.validate(cert)
+            if vres.error:
+                self._log.error('cert {!r}: {!r}', cert.get('id'), vres.error)
+                continue
+            certs.setdefault(cert['origin']['node'], []).append(cert)
+        nodes = set((it['payload']['node'] for it in items))
         # Collect valid certs: a valid cert is one that is signed by a trusted
         # signing key. A trusted signing key is our own key, or a key that has
-        # a valid certificate that does not have the "synconly" option.
-        node = self.vaults[vault]['node']
-        nodekey = base64.decode(self.vaults[vault]['keys']['sign']['public'])
-        result = {}
-        self.__collect_certs(node, nodekey, certs, result, 0)
+        # a valid certificate with a "sign" key.
+        node = self._vaults[vault]['node']
+        nodekey = base64.decode(self._vaults[vault]['keys']['sign']['public'])
+        result = []
+        self.__collect_certs(node, nodekey, certs, result)
         trusted_certs = {}
-        for signer in result:
-            for cert in result[signer]:
-                subject = cert[1]['payload']['node']
-                try:
-                    trusted_certs[subject].append(cert)
-                except KeyError:
-                    trusted_certs[subject] = [cert]
-        for subject in trusted_certs:
-            certs = trusted_certs[subject]
-            certs.sort()
-            trusted_certs[subject] = [ cert[1] for cert in certs ]
-        ncerts = sum([len(certs) for certs in trusted_certs.items()])
-        self._log.debug('there are {} trusted certs for vault "{}"', ncerts, vault)
+        for item in result:
+            cert = item['payload']
+            node = cert['node']
+            # Create a single certificate for each node with the union of all
+            # the certified keys
+            if node not in trusted_certs:
+                trusted_certs[node] = cert
+            else:
+                trusted_certs[node]['keys'].update(cert['keys'])
+        self._log.info('vault has {} nodes with valid trust path', len(trusted_certs))
         self._trusted_certs[vault] = trusted_certs
 
-    def _update_version_cache(self, items, notify=True, local=True):
-        """Update the version cache for `items'. If `notify` is True,
-        callbacks will be run."""
-        grouped = {}
-        for item in items:
-            uuid = item['payload']['version']['id']
-            try:
-                grouped[uuid].append(item)
-            except KeyError:
-                grouped[uuid] = [item]
-        changes = {}
-        for uuid,versions in grouped.items():
-            vault = versions[0]['vault']
-            try:
-                self._full_history[vault][uuid] += versions
-            except KeyError:
-                self._full_history[vault][uuid] = versions
-            linear = self._sort_history(uuid, self._full_history[vault][uuid])
-            self._linear_history[vault][uuid] = linear
-            current = self._version_cache[vault].get(uuid)
-            if not current and not linear[0]['payload'].get('deleted'):
-                self._version_cache[vault][uuid] = linear[0]
-            elif current and linear[0]['payload'].get('deleted'):
-                del self._version_cache[vault][uuid]
-            elif current and linear[0]['payload']['id'] != current['payload']['id']:
-                self._version_cache[vault][uuid] = linear[0]
-            else:
-                continue
-            if not notify:
-                continue
-            if vault not in changes:
-                changes[vault] = []
-            changes[vault].append(self._get_version(linear[0]))
-        for vault in changes:
-            self.raise_event('VersionsAdded', vault, changes[vault])
+    def _expire_tokens(self):
+        """Expire session tokens."""
+        # Also delete session tokens (expires = 0)
+        now = int(time.time())
+        deleted = self.store.delete('tokens', '$expires < ?', (now,))
+        self._log.debug('expired {} tokens', deleted)
 
-    def _clear_version_cache(self, vault):
-        """Wipe and reset the version cache. Used when locking a vault."""
-        if vault not in self._version_cache:
-            return
-        assert vault in self._linear_history
-        assert vault in self._full_history
-        self._version_cache[vault].clear()
-        self._linear_history[vault].clear()
-        self._full_history[vault].clear()
+    # Secret cache and history
 
-    def _sort_history(self, uuid, items):
-        """Create a linear history for a set of versions. This is
-        where our conflict resolution algorithm is implemented."""
-        # Create a tree mapping parents to their children
-        if not items:
-            return []
-        tree = {}
-        parents = {}
-        for item in items:
-            parent = item['payload'].get('parent')
-            try:
-                tree[parent].append(item)
-            except KeyError:
-                tree[parent] = [item]
-            parents[item['payload']['id']] = item
-        # Our conflict resulution works like this: we find the leaf in the
-        # tree with the highest created_at time. That is the current version.
-        # The linear history of the current version are its ancestors.
+    def _sort_history(self, secrets):
+        """Find the current version from a set of secrets, and return a list
+        with the current version at the front followed by all its ancestors.
+        """
+        assert len(secrets) > 0
+        # Our conflict resulution works like this: the leaf in the tree with
+        # the highest created_at time is the current version.
         #
-        # This algorithm protects us from nodes in the vault that have a wrong
-        # clock. However, if two updates happen close enough that the entire
-        # tree has not yet replicated, then the item with the highest created_at
-        # will win, whether or not that is the version that was created last
-        # according to a universal clock.
+        # Using a time stamp is desirable, because secrets often refer to an
+        # external entity like a web site. So the secret with the highest time
+        # stamp shold be the current one.
+        #
+        # The disadvantage of using timestamps is that there could be nodes
+        # with wrong clock. This is where the tree comes into play. An child
+        # node will always override its parent, even if it the parent has an
+        # outrageous timestamp (e.g. years into the future).
+        #
+        # In the presence of a partition *and* a wrong clock, the item with the
+        # highest time stamp will win. Once the nodes are synced again, and the
+        # wrong item was selected because of a wrong clock, saving the current
+        # node again will fix it.
+        #
+        # In distributed computing speak, this would be an AP system with
+        # eventual consistency.
+        #
+        # First construct a tree mapping parents to their children. Also create
+        # a map from version -> secret.
+        secid = secrets[0]['id']
+        tree = {}; secbyver = {}
+        for secret in secrets:
+            parent = secret.get('parent', secret['version'])
+            if parent != secret['version']:
+                tree.setdefault(parent, []).append(secret)
+            secbyver[secret['version']] = secret
+        # Find the leaves
         leaves = []
-        for item in items:
-            if item['payload']['id'] in tree:
-                continue  # not leaf
-            leaves.append(item)
+        for secret in secrets:
+            version = secret['version']
+            if version not in tree:
+                leaves.append(secret)
+        if len(leaves) == 0:
+            # All secrets are in a single cycle. This is a serious error, but
+            # can be resolved easily by just taking the most recent secret.
+            self._log.error('secret {!r} has cycle in its history', abbr(secid))
+            leaves = secrets
         assert len(leaves) > 0
-        leaves.sort(key=lambda x: x['payload']['created_at'], reverse=True)
+        # Find the leaf with the highest date, and construct back its history.
+        leaves.sort(key=lambda s: s['created_at'], reverse=True)
         history = [leaves[0]]
-        parent = item['payload'].get('parent')
-        while parent is not None and parent in parents:
-            item = parents[parent]
-            history.append(item)
-            parent = item['payload'].get('parent')
+        leaf = current = history[0]
+        parent = current.get('parent', current['version'])
+        while parent not in (current['version'], leaf['version']):
+            current = secbyver[parent]
+            history.append(current)
+            parent = current.get('parent', current['version'])
         return history
  
-    def _load_versions(self, vault):
-        """Load all current versions and their history."""
-        versions = []
-        query = "$vault = ? AND $payload$type = 'EncryptedItem'"
+    def _update_secret_cache(self, vault, items):
+        """Update the secrets index and cache for *items*."""
+        # Group items by secret ID (which is immutable across versions).
+        # Also keep an index from secret ID back to the item ID.
+        grouped = {}
+        for item in items:
+            secid = item['payload']['id']
+            grouped.setdefault(secid, []).append(item)
+        # Now per secret, create a linear history using our _sort_history()
+        # function, and take the most recent one as the current version.
+        changes = []
+        isnew = lambda it: it['payload']['version'] not in self._secret_index[vault]
+        fields = self._cached_fields[vault]
+        for secid,items in grouped.items():
+            # Only cache the payload and the fields that were marked as cached
+            # when the vault was unlocked.
+            secrets = [copy_dict(item['payload']) for item in items if isnew(item)]
+            for secret in secrets:
+                filter_dict(secret['fields'], include=fields)
+            self._full_history[vault].setdefault(secid, []).extend(secrets)
+            linear = self._sort_history(self._full_history[vault][secid])
+            self._linear_history[vault][secid] = linear
+            current = self._secret_cache[vault].search(secid)
+            if not current and not linear[0].get('deleted'):
+                self._secret_cache[vault].insert(secid, linear[0])
+            elif current and linear[0].get('deleted'):
+                self._secret_cache[vault].remove(secid)
+            elif current and linear[0]['version'] != current['version']:
+                self._secret_cache[vault].replace(secid, linear[0])
+            else:
+                continue
+            changes.append(linear[0])
+        # Update the mapping from version to item ID. This mapping marks
+        # versions we know about, and is also used by get_secret() to load
+        # individual secrets from disk.
+        for item in items:
+            verid = item['payload']['version']
+            self._secret_index[vault][verid] = item['id']
+        return changes
+
+    def _load_secrets(self, vault):
+        """Index all secrets and their history for a vault."""
+        errors = 0
+        secrets = []
+        self._log.info('loading secrets for vault {!r}', abbr(vault))
+        query = "$vault = ? AND $payload$type = 'Encrypted'"
         items = self.store.findall('items', query, (vault,))
         for item in items:
-            if not self._verify_item(vault, item) or \
-                    not self._decrypt_item(vault, item) or \
-                    not va_decitem.match(item) or \
-                    not va_version.match(item):
+            itmid = item.get('id')
+            vres = va_enc.validate(item)
+            if vres.error:
+                self._log.error('item {!r} corrupt in store: {!r}', abbr(itmid),  vres.error)
+                errors += 1
                 continue
-            versions.append(item)
-        self._update_version_cache(versions, notify=False)
-        cursize = len(self._version_cache[vault])
-        linsize = sum((len(h) for h in self._linear_history[vault].items()))
-        fullsize = sum((len(h) for h in self._full_history[vault].items()))
-        self._log.debug('loaded {} versions from vault {}', cursize, vault)
-        self._log.debug('linear history contains {} versions', linsize)
-        self._log.debug('full history contains {} versions', fullsize)
+            if not self._verify_item(vault, item) or not self._decrypt_item(vault, item):
+                continue
+            vres = va_secret.match(item)
+            if vres.error:
+                self._log.error('secret {!r} corrupt in store: {!r}', abbr(itmid), vres.error)
+                errors += 1
+                continue
+            secrets.append(item)
+        self._update_secret_cache(vault, secrets)
+        self._log.info('loaded {} secrets, skipped {}', len(secrets), errors)
+        # Dump some more stats in the logs
+        cursize = len(self._secret_cache[vault])
+        linsize = sum((len(h) for h in self._linear_history[vault].values()))
+        fullsize = sum((len(h) for h in self._full_history[vault].values()))
+        self._log.info('history: current={}, linear={}, full={}', cursize, linsize, fullsize)
 
+    def _readdress_secrets(self, vault):
+        """Re-address all secrets in *vault*."""
+        errors = 0
+        self._log.info('re-addressing all secrets')
+        secrets = self._secret_cache[vault]
+        with self.store.begin():
+            for secid,secret in secrets.items():
+                itmid = self._secret_index[vault][secret['version']]
+                item = self.store.findone('items', '$id = ?', (itmid,))
+                if not va_item.match(item) or not va_enc.match(item):
+                    self._log.error('item {!r} corrupt in store', abbr(itmid))
+                    errors += 1
+                    continue
+                if not self._verify_item(vault, item):
+                    errors += 1
+                    continue
+                item['id'] = crypto.random_uuid()
+                self._readdress_item(vault, item)
+                self._add_origin(vault, item)
+                self._sign_item(vault, item)
+                self.store.insert('items', item)
+        self._log.info('re-addressed {} secrets, skipped {}', len(secrets), errors)
+
+    # Helpers
+
+    def _new_item(self, vault, payload):
+        """Create a new empty item."""
+        item = {}
+        item['id'] = crypto.random_uuid()
+        item['type'] = 'Item'
+        item['vault'] = vault
+        item['payload'] = copy_dict(payload)
+        return item
+
+    def _new_certificate(self, vault, cert):
+        """Create a new certificate."""
+        item = self._new_item(vault, cert)
+        payload = item['payload']
+        payload['id'] = crypto.random_uuid()
+        payload['type'] = 'Certificate'
+        return item
+
+    def _new_secret(self, vault, secret, parent=None):
+        """Create a new empty secret."""
+        item = self._new_item(vault, secret)
+        payload = item['payload']
+        payload['version'] = crypto.random_uuid()
+        payload['type'] = 'Secret'
+        payload['created_at'] = time.time()
+        if parent:
+            payload['id'] = parent['id']
+            payload['parent'] = parent['version']
+        else:
+            payload['id'] = crypto.random_uuid()
+        return item
+
+    # Item envelopes
+
+    def _add_origin(self, vault, item):
+        """Add the origin section to an item."""
+        item['origin'] = origin = {}
+        origin['node'] = self._vaults[vault]['node']
+        origin['seqnr'] = self._next_seqnr[vault]
+        self._next_seqnr[vault] += 1
+ 
     def _sign_item(self, vault, item):
         """Add a signature to an item."""
-        assert vault in self.vaults
-        assert vault in self._private_keys
-        signature = {}
+        assert vault in self._vaults
+        assert vault in self._decrypted_keys
+        signature = item['signature'] = {}
         signature['algo'] = 'rsa-pss-sha256'
         message = json.dumps_c14n(item).encode('utf8')
-        signkey = self._private_keys[vault][0]
+        assert 'sign' in self._decrypted_keys[vault]
+        signkey = self._decrypted_keys[vault]['sign']['private']
         blob = crypto.rsa_sign(message, signkey, 'pss-sha256')
         signature['blob'] = base64.encode(blob)
-        item['signature'] = signature
+
+    def _verify_signature(self, item, pubkey):
+        """Verify a signature for an item.
+
+        This only checks if the singature is correct, not whether the signature
+        was created by a trusted node.
+        """
+        assert va_item.match(item)
+        if item['signature']['algo'] != 'rsa-pss-sha256':
+            self._log.error('item {!r} unknown sign algo {!r}', abbr(item['id']), algo)
+            return False
+        blob = item['signature'].pop('blob')
+        message = json.dumps_c14n(item).encode('utf8')
+        signature = base64.decode(blob)
+        try:
+            status = crypto.rsa_verify(message, signature, pubkey, 'pss-sha256')
+        except crypto.Error:
+            self._log.error('item {!r} garbage in signature', abbr(item['id']))
+            return False
+        if not status:
+            self._log.error('item {!r} has invalid signature', abbr(item['id']))
+            return False
+        item['signature']['blob'] = blob
+        return True
 
     def _verify_item(self, vault, item):
-        """Verify that an item has a correct signature and that it
-        the signature was created by a trusted node."""
-        signer = item['origin']['node']
-        if signer not in self._trusted_certs[vault]:
-            self._log.error('item {} was signed by unknown/untrusted node {}',
-                            item['id'], signer)
+        """Verify the signature on an item.
+
+        The signature needs to be correct, and needs to be created by a trusted
+        node with the "sign_cert" access right.
+        """
+        assert vault in self._trusted_certs
+        node = item['origin']['node']
+        if node not in self._trusted_certs[vault]:
+            self._log.warning('item {!r} signed by unknown node {!r}',
+                              abbr(item['id']), abbr(node))
             return False
-        cert = self._trusted_certs[vault][signer][0]['payload']
-        synconly = cert.get('restrictions', {}).get('synconly')
-        if synconly:
-            return False  # synconly certs may not sign items
-        pubkey = base64.decode(cert['keys']['sign']['key'])
+        cert = self._trusted_certs[vault][node]
+        key = cert['keys'].get('sign')
+        if not key:
+            self._log.warning('item {!r} signed by unprivileged node {!r}',
+                              abbr(item['id']), abbr(node))
+            return False
+        pubkey = base64.decode(key['public'])
         return self._verify_signature(item, pubkey)
 
     def _encrypt_item(self, vault, item):
-        """INTERNAL: Encrypt an item."""
-        assert vault in self.vaults
-        assert vault in self._private_keys
+        """Encrypt the payload of an item."""
+        assert vault in self._vaults
+        assert vault in self._decrypted_keys
         clear = item.pop('payload')
         item['payload'] = payload = {}
-        payload['type'] = 'EncryptedItem'
+        payload['type'] = 'Encrypted'
         payload['algo'] = 'aes-cbc-pkcs7'
         iv = crypto.random_bytes(16)
         payload['iv'] = base64.encode(iv)
@@ -481,186 +592,192 @@ class Model(object):
         payload['keyalgo'] = 'rsa-oaep'
         payload['keys'] = keys = {}
         # encrypt the symmetric key to all nodes in the vault including ourselves
-        for node in self._trusted_certs[vault]:
-            cert = self._trusted_certs[vault][node][0]['payload']
-            synconly = cert.get('restrictions', {}).get('synconly')
-            if synconly:
-                # do not encrypt items to "synconly" nodes
+        for node,cert in self._trusted_certs[vault].items():
+            key = cert['keys'].get('encrypt')
+            if not key:
                 continue
-            pubkey = base64.decode(cert['keys']['encrypt']['key'])
+            pubkey = base64.decode(key['public'])
             enckey = crypto.rsa_encrypt(symkey, pubkey, 'oaep')
             keys[node] = base64.encode(enckey)
 
     def _decrypt_item(self, vault, item):
-        """INTERNAL: decrypt an encrypted item."""
-        assert vault in self.vaults
-        assert vault in self._private_keys
-        algo = item['payload']['algo']
-        keyalgo = item['payload']['keyalgo']
-        if algo != 'aes-cbc-pkcs7':
-            self._log.error('unknow algo in encrypted payload in item {}: {}', item['id'], algo)
-            return False
-        if keyalgo != 'rsa-oaep':
-            self._log.error('unknow keyalgo in encrypted payload in item {}: {}', item['id'], algo)
-            return False
-        node = self.vaults[vault]['node']
+        """Decrypt an encrypted payload."""
+        assert vault in self._vaults
+        assert vault in self._decrypted_keys
+        assert item['payload']['algo'] == 'aes-cbc-pkcs7'
+        assert item['payload']['keyalgo'] == 'rsa-oaep'
+        node = self._vaults[vault]['node']
         keys = item['payload']['keys']
         if node not in keys:
-            self._log.info('item {} was not encrypted to us, skipping', item['id'])
+            self._log.warning('item {!r} not encrypted to us', abbr(item['id']))
             return False
         try:
             enckey = base64.decode(keys[node])
-            privkey = self._private_keys[vault][1]
+            privkey = self._decrypted_keys[vault]['encrypt']['private']
             symkey = crypto.rsa_decrypt(enckey, privkey, 'oaep')
             blob = base64.decode(item['payload']['blob'])
             iv = base64.decode(item['payload']['iv'])
             clear = crypto.aes_decrypt(blob, symkey, iv, 'cbc-pkcs7')
         except crypto.Error as e:
-            self._log.error('could not decrypt encrypted payload in item {}: {}' % (item['id'], str(e)))
+            self._log.error('item {!r} decryption failed: {!s}', abbr(item['id']), e)
             return False
-        payload = json.try_loads(clear.decode('utf8'))
+        payload = json.try_loads(clear.decode('utf8'), dict)
         if payload is None:
-            self._log.error('illegal JSON in decrypted payload in item {}', item['id'])
+            self._log.error('item {!r} illegal JSON in payload', item['id'])
             return False
         item['payload'] = payload
         return True
 
-    def _add_origin(self, vault, item):
-        """Add the origin section to an item."""
-        item['origin'] = origin = {}
-        origin['node'] = self.vaults[vault]['node']
-        origin['seqnr'] = self._next_seqnr[vault]
-        self._next_seqnr[vault] += 1
+    def _readdress_item(self, vault, item):
+        """Readdress an existing item.
         
-    def _new_item(self, vault, ptype, **kwargs):
-        """Create a new empty item."""
-        item = {}
-        item['id'] = crypto.random_uuid()
-        item['type'] = 'Item'
-        item['vault'] = vault
-        item['payload'] = payload = {}
-        payload['type'] = ptype
-        payload.update(kwargs)
-        return item
+        This re-encypts the symmetric key of the payload to all trusted certs.
+        """
+        assert vault in self._vaults
+        assert vault in self._decrypted_keys
+        assert item['payload']['algo'] == 'aes-cbc-pkcs7'
+        assert item['payload']['keyalgo'] == 'rsa-oaep'
+        node = self._vaults[vault]['node']
+        keys = item['payload']['keys']
+        if node not in keys:
+            self._log.warning('item {!r} not encrypted to us', abbr(item['id']))
+            return False
+        try:
+            enckey = base64.decode(keys[node])
+            privkey = self._decrypted_keys[vault]['encrypt']['private']
+            symkey = crypto.rsa_decrypt(enckey, privkey, 'oaep')
+        except crypto.Error as e:
+            self._log.error('item {!r} decryption failed: {!s}', abbr(item['id']), e)
+            return False
+        keys = item['payload']['keys'] = {}
+        # encrypt the symmetric key to all nodes in the vault including ourselves
+        for node,cert in self._trusted_certs[vault].items():
+            key = cert['keys'].get('encrypt')
+            if not key:
+                continue
+            pubkey = base64.decode(key['public'])
+            enckey = crypto.rsa_encrypt(symkey, pubkey, 'oaep')
+            keys[node] = base64.encode(enckey)
+        return True
 
-    def _new_certificate(self, vault, **kwargs):
-        """Create anew certificate."""
-        item = self._new_item(vault, 'Certificate', **kwargs)
-        item['payload']['id'] = crypto.random_uuid()
-        return item
+    # Vault keys
 
-    def _new_version(self, vault, version, parent=None):
-        """Create a new empty version."""
-        item = self._new_item(vault, 'Version')
-        payload = item['payload']
-        payload['id'] = crypto.random_uuid()
-        payload['created_at'] = int(time.time())
-        if parent is not None:
-            payload['parent'] = parent
-        payload['version'] = filter_dict(version, exclude=('vault', 'deleted', 'created_at'))
-        return item
-
-    def _get_version(self, item):
-        """Return the version inside an item, with envelope."""
-        payload = item['payload']
-        version = payload['version'].copy()
-        version['vault'] = item['vault']
-        version['deleted'] = payload.get('deleted', False)
-        version['created_at'] = payload['created_at']
-        return version
-
-    def _create_vault_key(self, password):
-        """Create a new vault key. Return a tuple (private, public,
-        keyinfo). The keyinfo structure contains the encrypted keys."""
-        keyinfo = {}
-        private, public = crypto.rsa_genkey(3072)
-        keyinfo['keytype'] = 'rsa'
-        keyinfo['public'] = base64.encode(public)
-        keyinfo['encinfo'] = encinfo = {}
+    def _create_vault_keys(self):
+        """Create *count* vault keys. Key generation is done in a thread pool."""
+        pool = gruvi.get_cpu_pool()
+        dummy = crypto.pbkdf2_speed('hmac-sha1')
+        keynames = ('sign', 'encrypt', 'auth')
+        def create_key():
+            key = {'keytype': 'rsa'}
+            key['private'], key['public'] = crypto.rsa_genkey(2048)
+            return key
+        futs = [pool.submit(create_key) for kn in keynames]
+        return dict(((kn, futs.pop().result()) for kn in keynames))
+ 
+    def _encrypt_vault_key(self, key, password):
+        """Encrypt and encode a vault key."""
+        enc = {}
+        enc['keytype'] = key['keytype']
+        enc['public'] = base64.encode(key['public'])
         if not password:
-            encinfo['algo'] = 'plain'
-            keyinfo['private'] = base64.encode(private)
-            return private, public, keyinfo
-        encinfo['algo'] = 'aes-cbc-pkcs7'
-        iv = crypto.random_bytes(16)
-        encinfo['iv'] = base64.encode(iv)
-        prf = 'hmac-sha1'
-        encinfo['kdf'] = 'pbkdf2-%s' % prf
-        # Tune pbkdf2 so that it takes about 0.2 seconds (but always at
-        # least 4096 iterations).
-        count = max(4096, int(0.2 * crypto.pbkdf2_speed(prf)))
-        self._log.debug('using {} iterations for PBKDF2', count)
-        encinfo['count'] = count
+            enc['private'] = base64.encode(key['private'])
+            return enc
+        password = password.encode('utf8')
+        encinfo = enc['encinfo'] = {}
+        # Generate a key from password using a KDF.
+        encinfo['kdf'] = 'pbkdf2-hmac-sha1'
+        encinfo['count'] = max(4096, int(0.2 * crypto.pbkdf2_speed('hmac-sha1')))
         encinfo['length'] = 16
         salt = crypto.random_bytes(16)
         encinfo['salt'] = base64.encode(salt)
-        symkey = crypto.pbkdf2(password, salt, encinfo['count'], encinfo['length'], prf)
-        enckey = crypto.aes_encrypt(private, symkey, iv, 'cbc-pkcs7')
-        keyinfo['private'] = base64.encode(enckey)
-        keyinfo['pwcheck'] = pwcheck = {}
-        pwcheck['algo'] = 'hmac-random-sha256'
+        symkey = crypto.pbkdf2(password, salt, encinfo['count'], encinfo['length'], 'hmac-sha1')
+        # Encrypt using the generated key and store in the copy.
+        encinfo['algo'] = 'aes-cbc-pkcs7'
+        iv = crypto.random_bytes(16)
+        encinfo['iv'] = base64.encode(iv)
+        enckey = crypto.aes_encrypt(key['private'], symkey, iv, 'cbc-pkcs7')
+        enc['private'] = base64.encode(enckey)
+        # Store a password verifier as well. It is important that the verifier
+        # verifies the *generated* key not the password! This conserves the work
+        # factor of the KDF.
+        pwcheck = enc['pwcheck'] = {}
+        pwcheck['algo'] = 'hmac-sha256-random'
         random = crypto.random_bytes(16)
         pwcheck['random'] = base64.encode(random)
         verifier = crypto.hmac(symkey, random, 'sha256')
         pwcheck['verifier'] = base64.encode(verifier)
-        return private, public, keyinfo
+        return enc
 
-    def _create_vault_keys(self, password):
-        """Create all 3 vault keys (sign, encrypt and auth)."""
-        # Generate keys in the CPU thread pool.
-        dummy = crypto.pbkdf2_speed('hmac-sha1')
-        pool = gruvi.ThreadPool.get_cpu_pool()
-        fsign = pool.submit(self._create_vault_key, password)
-        fencrypt = pool.submit(self._create_vault_key, password)
-        fauth = pool.submit(self._create_vault_key, '')
-        keys = { 'sign': fsign.result(), 'encrypt': fencrypt.result(),
-                 'auth': fauth.result() }
-        return keys
-  
+    def _decrypt_vault_key(self, key, password):
+        """Decrypt and decode vault key."""
+        dec = {}
+        dec['keytype'] = key['keytype']
+        dec['public'] = base64.decode(key['public'])
+        # Derive the encryption key from the password
+        encinfo = key.get('encinfo')
+        if encinfo is None:
+            dec['private'] = base64.decode(key['private'])
+            return dec
+        password = password.encode('utf8')
+        iv = base64.decode(encinfo['iv'])
+        salt = base64.decode(encinfo['salt'])
+        assert encinfo['kdf'] == 'pbkdf2-hmac-sha1'
+        symkey = crypto.pbkdf2(password, salt, encinfo['count'], encinfo['length'], 'hmac-sha1')
+        # Check that the derived key is correct
+        pwcheck = key['pwcheck']
+        assert pwcheck['algo'] == 'hmac-sha256-random'
+        random = base64.decode(pwcheck['random'])
+        verifier = base64.decode(pwcheck['verifier'])
+        check = crypto.hmac(symkey, random, 'sha256')
+        if check != verifier:
+            raise InvalidPassword('Invalid vault password')
+        # Decrypt the private key and store in the copy.
+        assert encinfo['algo'] == 'aes-cbc-pkcs7'
+        privkey = base64.decode(key['private'])
+        dec['private']= crypto.aes_decrypt(privkey, symkey, iv, 'cbc-pkcs7')
+        return dec
+
     # Events / callbacks
 
     def add_callback(self, callback):
-        """Register a callback that that gets notified when one or more
-        versions have changed."""
+        """Register a callback that that gets notified of model events."""
         self.callbacks.append(callback)
 
     def raise_event(self, event, *args):
-        """Raise an event o all callbacks."""
+        """Raise an event to all callbacks."""
         for callback in self.callbacks:
             try:
                 callback(event, *args)
             except Exception as e:
                 self._log.error('callback raised exception: {}' % str(e))
 
-    # API for a typical GUI consumer
+    # Configurations
 
     def create_config(self, config):
         """Create a new configuration."""
         vres = va_config.validate(config)
         if vres.error:
-            raise ValidationError('Invalid config: {0}'.format(vres.error))
+            raise ValidationError('invalid config: {0}'.format(vres.error))
         self.store.insert('configs', config)
         return config
 
     def get_config(self, name):
-        """Return the configuration document."""
+        """Return the configuration *name*."""
         return self.store.findone('configs', '$name = ?', (name,))
 
     def get_configs(self):
         """Return all configurations."""
         return self.store.findall('configs')
 
-    def update_config(self, update):
-        """Update the configuration document."""
-        name = update.get('name')
+    def update_config(self, name, update):
+        """Update a configuration."""
         config = self.store.findone('configs', '$name = ?', (name,))
         if config is None:
-            raise NotFound('No such config: {0}'.format(name))
-        for key,value in update.items():
-            if value is not None:
-                config[key] = value
-            elif key in config:
-                del config[key]
+            raise NotFound('no such config {0!r}'.format(name))
+        update_dict(config, update)
+        vres = va_config.validate(config)
+        if vres.error:
+            raise ValidationError('invalid update: {0}'.format(vres.error))
         self.store.update('configs', config, '$name = ?', (name,))
         return config
 
@@ -668,544 +785,634 @@ class Model(object):
         """Delete a configuration document."""
         config = self.store.findone('configs', '$name = ?', (name,))
         if config is None:
-            raise NotFound('No such config: {0}'.format(name))
+            raise NotFound('no such config: {0!r}'.format(name))
         self.store.delete('configs', '$name = ?', (name,))
 
     # Tokens
 
-    def get_token(self, tokid):
-        """Return the authentication token identified by *tokid*."""
-        return self._tokens.get(tokid)
-
-    def add_token(self, token):
+    def create_token(self, token):
         """Create a new authentication token *token*."""
         if 'id' not in token:
             token['id'] = crypto.random_cookie()
         vres = va_token.validate(token)
         if not vres.match:
             raise ValidationError('Invalid token: {0}'.format(vres.error))
-        tokid = token['id']
-        if tokid in self._tokens:
-            raise ValidationError('Token already exists: {0}'.format(tokid))
-        self._tokens[tokid] = token
-        if token.get('expires', '0') != '0':
-            self.store.insert('tokens', token)
+        self.store.insert('tokens', token)
+        return token
+
+    def get_token(self, tokid):
+        """Return the authentication token identified by *tokid*."""
+        return self.store.findone('tokens', '$id = ?', (tokid,))
+
+    def get_tokens(self):
+        """Return a list of all tokens."""
+        return self.store.findall('tokens')
+
+    def update_token(self, tokid, update):
+        """Update a token."""
+        token = self.store.findone('tokens', '$id = ?', (tokid,))
+        if token is None:
+            raise NotFound('no such token: {0!r}'.format(name))
+        update_dict(token, update)
+        vres = va_token.validate(token)
+        if vres.error:
+            raise ValidationError('invalid update: {0}'.format(vres.error))
+        self.store.update('tokens', token, '$id = ?', (tokid,))
         return token
 
     def delete_token(self, tokid):
         """Delete the authentication token *tokid*."""
-        if tokid not in self._tokens:
-            raise NotFound('No such token: {0}'.format(tokid))
-        del self._tokens[tokid]
+        token = self.store.findone('tokens', '$id = ?', (tokid,))
+        if token is None:
+            raise NotFound('no such token {0!r}'.format(tokid))
         self.store.delete('tokens', '$id = ?', (tokid,))
 
-    def validate_token(self, tokid, right=None):
+    def validate_token(self, tokid, allow=None):
         """Validate a token."""
-        token = self._tokens.get(tokid)
+        token = self.store.findone('tokens', '$id = ?', (tokid,))
         if token is None:
             return False
         expires = token['expires']
         if expires and expires < time.time():
             return False
-        if right and not token['rights'].get(right):
+        if allow and not token['allow'].get(allow):
             return False
         return True
 
     # Vaults
 
-    def create_vault(self, name, password, uuid=None, notify=True):
+    def _get_vault(self, uuid):
+        """Filter unnecessary information from a vault object."""
+        return copy_dict(self._vaults[uuid], exclude=('keys',))
+
+    def create_vault(self, template):
         """Create a new vault.
         
-        The `name` argument specifies the name of the vault to create. The
-        private keys for this vault are encrypted with `password'. If the
-        `uuid` argument is given, a vault with this UUID is created. The
-        default is to generate an new UUID for this vault. The `notify`
-        arguments determines wether or not callbacks must be called when this
-        vault is created.
+        The newly created vault is created based on *template*. The vault will
+        start unlocked, and no fields will be cached.
         """
-        if uuid is not None and uuid in self.vaults:
-            raise ModelError('A vault with UUID {0} already exists}'.format(uuid))
-        if not 0 < len(name) <= 100:
-            raise ValidationError('Name must be 0 < length <= 100 characters')
-        if not 0 < len(password) <= 100:
-            raise ValidationError('Password must be 0 < length <= 100 characters')
-        if isinstance(password, compat.text_type):
-            password = password.encode('utf8')
-        vault = {}
+        vres = va_vault_tmpl.validate(template)
+        if vres.error:
+            raise ValidationError('illegal vault template: {0!r}'.format(vres.error))
+        uuid = template.get('id')
+        if uuid is not None and uuid in self._vaults:
+            raise Exists('vault already exists: {0!r}'.format(uuid))
+        vault = copy_dict(template, exclude=('password',))
         if uuid is None:
-            uuid = crypto.random_uuid()
-        vault['id'] = uuid
-        vault['name'] = name
+            uuid = vault['id'] = crypto.random_uuid()
         vault['node'] = crypto.random_uuid()
-        keys = self._create_vault_keys(password)
-        vault['keys'] = dict(((key, keys[key][2]) for key in keys))
+        self._log.debug('creating new vault {!r}', abbr(uuid))
+        self._log.debug('vault node is {!r}', abbr(vault['node']))
+        keys = self._create_vault_keys()
+        self._decrypted_keys[uuid] = keys
+        # Encrypt the "sign" and "encrypt" keys but not the "auth" key. This
+        # allows synchronization while a vault is locked. An auth key only
+        # allows access to encrypted data, which you already have if you
+        # managed to read it from the store in the first place.
+        vault['keys'] = {}
+        password = template['password']
+        vault['keys']['sign'] = self._encrypt_vault_key(keys['sign'], password)
+        vault['keys']['encrypt'] = self._encrypt_vault_key(keys['encrypt'], password)
+        vault['keys']['auth'] = self._encrypt_vault_key(keys['auth'], '')
+        self._log.debug('encrypted vault keys')
         self.store.insert('vaults', vault)
-        self.vaults[uuid] = vault
-        # Start unlocked by default
-        self._private_keys[uuid] = (keys['sign'][0], keys['encrypt'][0])
-        self._version_cache[uuid] = {}
+        self._log.debug('added new vault to store')
+        self._vaults[uuid] = vault
+        self._next_seqnr[uuid] = 0
+        self._secret_index[uuid] = {}
+        self._secret_cache[uuid] = SkipList()
+        self._cached_fields[uuid] = set()
         self._linear_history[uuid] = {}
         self._full_history[uuid] = {}
-        self._next_seqnr[uuid] = 0
-        # Add a self-signed certificate
-        certinfo = { 'node': vault['node'], 'name': util.gethostname() }
-        keys = certinfo['keys'] = {}
-        for key in vault['keys']:
-            keys[key] = { 'key': vault['keys'][key]['public'],
-                          'keytype': vault['keys'][key]['keytype'] }
-        certinfo['restrictions'] = {}
-        item = self._new_certificate(uuid, **certinfo)
+        self._trusted_certs[uuid] = {}
+        # Add a self-signed certificate. This makes _load_certificates()
+        # trust our own keys without need for special casing.
+        cert = {'node': vault['node'], 'name': util.gethostname(), 'keys': {}}
+        for keyname in vault['keys']:
+            key = copy_dict(vault['keys'][keyname], include=('public', 'keytype'))
+            cert['keys'][keyname] = key
+        item = self._new_certificate(uuid, cert)
         self._add_origin(uuid, item)
         self._sign_item(uuid, item)
-        self.import_item(uuid, item, notify=notify)
-        if notify:
-            self.raise_event('VaultAdded', vault)
-        return filter_vault(vault)
+        count = self.import_items(uuid, [item])
+        self._log.debug('added self-signed certificate to store')
+        assert count == 1
+        vault = self._get_vault(uuid)
+        self.raise_event('VaultCreated', vault)
+        return vault
 
     def get_vault(self, uuid):
-        """Return the vault with `uuid` or None if there is no such vault."""
-        if uuid not in self.vaults:
+        """Return the vault with *uuid*.
+
+        If the vault does not exist, None is returned.
+        """
+        if uuid not in self._vaults:
             return
-        vault = self.store.findone('vaults', '$id = ?', (uuid,))
-        return filter_vault(vault)
+        return self._get_vault(uuid)
 
     def get_vaults(self):
         """Return a list of all vaults."""
-        return filter_vault(self.store.findall('vaults'))
+        return [self._get_vault(uuid) for uuid in self._vaults]
 
-    def update_vault(self, update):
-        """Update a vault."""
-        uuid = update['id']
-        if uuid not in self.vaults:
-            raise NotFound('No such vault: {0}'.format(uuid))
-        vres = va_vault_update.validate(update)
-        if not vres.match:
-            raise ValidationError('Illegal vault update: {0}'.format(vres.error))
-        vault = self.vaults[uuid]
-        for key in update:
-            vault[key] = update
-        self.store.update('vaults', vault, '$id = ?', (vault['id'],))
-        self.raise_event('VaultUpdated', vault)
-        return filter_vault(vault)
-
-    def delete_vault(self, uuid):
-        """Delete a vault and all its items."""
-        if uuid not in self.vaults:
-            raise NotFound('No such vault: {0}'.format(uuid))
-        vault = self.vaults[uuid]
-        self.store.delete('vaults', '$id = ?', (uuid,))
-        self.store.delete('items', '$vault = ?', (uuid,))
-        # The VACUUM command here ensures that the data we just deleted is
-        # removed from the sqlite database file. However, quite likely the
-        # data is still on the disk, at least for some time. So this is not
-        # a secure delete.
-        self.store.execute('vaults', 'VACUUM')
-        del self.vaults[uuid]
-        del self._private_keys[uuid]
-        del self._version_cache[uuid]
-        del self._linear_history[uuid]
-        del self._full_history[uuid]
-        del self._next_seqnr[uuid]
-        vault['deleted'] = True
-        self.raise_event('VaultRemoved', vault)
+    def get_vault_status(self, uuid):
+        """Return the vault status, either 'LOCKED' or 'UNLOCKED'."""
+        if uuid not in self._vaults:
+            raise NotFound('no such vault: {0!r}'.format(uuid))
+        return 'UNLOCKED' if 'sign' in self._decrypted_keys[uuid] else 'LOCKED'
 
     def get_vault_statistics(self, uuid):
         """Return some statistics for a vault."""
-        if uuid not in self.vaults:
-            raise NotFound('No such vault: {0}'.format(uuid))
+        assert uuid in self._vaults
         stats = {}
-        stats['current_versions'] = len(self._version_cache[uuid])
-        stats['total_versions'] = len(self._linear_history[uuid])
+        stats['current_secrets'] = len(self._secret_cache[uuid])
+        stats['total_secrets'] = len(self._linear_history[uuid])
         linsize = sum((len(h) for h in self._linear_history[uuid].items()))
         stats['linear_history_size'] = linsize
         fullsize = sum((len(h) for h in self._full_history[uuid].items()))
         stats['full_history_size'] = fullsize
-        result = self.store.execute('items', """
+        result = self.store.execute("""
                     SELECT COUNT(*) FROM items WHERE $vault = ?
                     """, (uuid,))
-        stats['total_items'] = result[0]
-        result = self.store.execute('items', """
+        stats['total_items'] = result[0][0]
+        result = self.store.execute("""
                     SELECT COUNT(*) FROM items WHERE $vault = ?
                     AND $payload$type = 'Certificate'
                     """, (uuid,))
-        stats['total_certificates'] = result[0]
-        result = self.store.execute('items', """
+        stats['total_certificates'] = result[0][0]
+        result = self.store.execute("""
                     SELECT COUNT(*) FROM
                     (SELECT DISTINCT $payload$node FROM items
                      WHERE $vault = ? AND $payload$type = 'Certificate')
                     """, (uuid,))
-        stats['total_nodes'] = result[0]
+        stats['total_nodes'] = result[0][0]
         stats['trusted_nodes'] = len(self._trusted_certs[uuid])
         return stats
 
-    def unlock_vault(self, uuid, password):
+    def update_vault(self, uuid, update):
+        """Update a vault.
+
+        The updated vault is returned.
+        """
+        if uuid not in self._vaults:
+            raise NotFound('no such vault: {0!r}'.format(uuid))
+        vres = va_vault_upd.validate(update)
+        if not vres.match:
+            raise ValidationError('illegal update: {0}'.format(vres.error))
+        vault = self._vaults[uuid]
+        password = update.get('password')
+        if password is not None:
+            if 'sign' not in self._decrypted_keys[uuid]:
+                raise VaultLocked('cannot update password when locked')
+            for keyname in 'sign', 'encrypt':
+                key = self._decrypted_keys[uuid][keyname]
+                vault['keys'][keyname] = self._encrypt_vault_key(key, password)
+            self._log.debug('updated vault password')
+        update = copy_dict(update, exclude=('password',))
+        if update:
+            update_dict(vault, update)
+            self._log.debug('updated {} vault attributes', len(update))
+        self.store.update('vaults', vault, '$id = ?', (uuid,))
+        self._log.debug('saved back vault to store')
+        vault = self._get_vault(uuid)
+        self.raise_event('VaultUpdated', vault)
+        return vault
+
+    def delete_vault(self, uuid):
+        """Delete a vault and all its secrets.
+
+        This is an irreversible operation. The vault and its secrets are
+        removed from the store.
+        """
+        if uuid not in self._vaults:
+            raise NotFound('no such vault: {0!r}'.format(uuid))
+        self.store.delete('vaults', '$id = ?', (uuid,))
+        self.store.delete('items', '$vault = ?', (uuid,))
+        self._log.debug('deleted vault entities from store')
+        # The vacuum() here ensures that the data we just deleted is removed
+        # from the sqlite database file. However, quite likely the data is
+        # still on the disk, at least for some time. So this is definitely not
+        # a secure delete.
+        self.store.execute('VACUUM')
+        self._log.debug('compacted the store')
+        del self._vaults[uuid]
+        del self._next_seqnr[uuid]
+        del self._decrypted_keys[uuid]
+        del self._trusted_certs[uuid]
+        del self._secret_index[uuid]
+        del self._secret_cache[uuid]
+        del self._cached_fields[uuid]
+        del self._linear_history[uuid]
+        del self._full_history[uuid]
+        self._log.debug('cleaned up all caches')
+        self.raise_event('VaultDeleted', uuid)
+
+    def unlock_vault(self, uuid, password, cache_fields=()):
         """Unlock a vault.
         
-        The vault `uuid` is unlocked using `password`. This decrypts the
-        private keys that are stored in the database and stored them in
-        memory. It is not an error to unlock a vault that is already unlocked.
+        Unlocking a vault decrypts the private keys that are stored in the
+        store and stores them in memory. It will also decrypt all secrets in
+        the vault and make an in-memory index for them. Additionally, all
+        fields in *cache_fields* will be cached in memory as well.
+
+        It is not an error to unlock a vault that is already unlocked. This
+        can be used to add to the set of fields that are cached for a vault.
         """
-        if uuid not in self.vaults:
-            raise NotFound('No such vault: {0}'.format(uuid))
-        assert uuid in self._private_keys
-        if len(self._private_keys[uuid]) > 0:
-            return
-        if isinstance(password, compat.text_type):
-            password = password.encode('utf8')
-        for key in ('sign', 'encrypt'):
-            keyinfo = self.vaults[uuid]['keys'][key]
-            pubkey = base64.decode(keyinfo['public'])
-            privkey = base64.decode(keyinfo['private'])
-            encinfo = keyinfo['encinfo']
-            pwcheck = keyinfo['pwcheck']
-            # These are enforced by va_vault.match()
-            assert encinfo['algo'] == 'aes-cbc-pkcs7'
-            assert encinfo['kdf'] == 'pbkdf2-hmac-sha1'
-            assert pwcheck['algo'] == 'hmac-random-sha256'
-            salt = base64.decode(encinfo['salt'])
-            iv = base64.decode(encinfo['iv'])
-            prf = encinfo['kdf'][7:]
-            symkey = crypto.pbkdf2(password, salt, encinfo['count'], encinfo['length'], prf)
-            random = base64.decode(pwcheck['random'])
-            verifier = base64.decode(pwcheck['verifier'])
-            check = crypto.hmac(symkey, random, 'sha256')
-            if check != verifier:
-                raise ModelError('WrongPassword')
-            private = crypto.aes_decrypt(privkey, symkey, iv, 'cbc-pkcs7')
-            self._private_keys[uuid].append(private)
-        self._load_versions(uuid)
-        self._log.debug('unlocked vault "{}" ({})', uuid, self.vaults[uuid]['name'])
-        self.raise_event('VaultUnlocked', self.vaults[uuid])
+        if uuid not in self._vaults:
+            raise NotFound('no such vault: {0!r}'.format(uuid))
+        assert uuid in self._decrypted_keys
+        # Need to unlock? The vault may already be unlocked and user may just
+        # want to update the cached fields.
+        if 'sign' in self._decrypted_keys[uuid]:
+            unlocked = False
+        else:
+            vault = self._vaults[uuid]
+            for keyname in ('sign', 'encrypt'):
+                key = self._decrypt_vault_key(vault['keys'][keyname], password)
+                self._decrypted_keys[uuid][keyname] = key
+            self._log.debug('unlocked vault {!r} ({!r})', abbr(uuid), vault['name'])
+            unlocked = True
+        # Need to (re)create the secret cache?
+        fields = set(cache_fields)
+        if not self._cached_fields[uuid].issuperset(fields):
+            self._cached_fields[uuid].update(fields)
+            self._secret_cache[uuid].clear()
+            self._secret_index[uuid].clear()
+            self._linear_history[uuid].clear()
+            self._full_history[uuid].clear()
+            self._load_secrets(uuid)
+            self._log.debug('re-initialized secret cache')
+        if unlocked:
+            self.raise_event('VaultUnlocked', uuid)
 
     def lock_vault(self, uuid):
         """Lock a vault.
         
-        This destroys the decrypted private keys and any decrypted items that
-        are cached. It is not an error to lock a vault that is already locked.
+        This destroys the decrypted private keys and any secrets that are
+        cached.
         """
-        if uuid not in self.vaults:
-            raise NotFound('No such vault: {0}'.format(uuid))
-        assert uuid in self._private_keys
-        if len(self._private_keys[uuid]) == 0:
+        if uuid not in self._vaults:
+            raise NotFound('no such vault: {0!r}'.format(uuid))
+        assert uuid in self._decrypted_keys
+        if 'sign' not in self._decrypted_keys[uuid]:
+            return  # already locked
+        del self._decrypted_keys[uuid]['sign']
+        del self._decrypted_keys[uuid]['encrypt']
+        self._secret_index[uuid].clear()
+        self._secret_cache[uuid].clear()
+        self._cached_fields[uuid].clear()
+        self._linear_history[uuid].clear()
+        self._full_history[uuid].clear()
+        vault = self._vaults[uuid]
+        self._log.debug('locked vault {!r} ({!r})', abbr(uuid), vault['name'])
+        self.raise_event('VaultLocked', uuid)
+
+    # Secrets
+
+    def create_secret(self, vault, template):
+        """Create a new secret and add it to a vault."""
+        if vault not in self._vaults:
+            raise NotFound('no such vault: {0!r}'.format(vault))
+        assert vault in self._decrypted_keys
+        if 'sign' not in self._decrypted_keys[vault]:
+            raise VaultLocked('vault {0!r} is locked'.format(vault))
+        assert vault in self._secret_cache
+        vres = va_secret_tmpl.validate(template)
+        if vres.error:
+            raise ValidationError('illegal template: {0!r}'.format(vres.error))
+        item = self._new_secret(vault, template)
+        self._encrypt_item(vault, item)
+        self._add_origin(vault, item)
+        self._sign_item(vault, item)
+        count = self.import_items(vault, [item])
+        assert count == 1
+        return copy_dict(item['payload'])
+
+    def get_secret(self, vault, uuid):
+        """Get a single current secret.
+
+        The secret is a full secret containing all of its fields.
+        """
+        if vault not in self._vaults:
+            raise NotFound('no such vault: {0!r}'.format(vault))
+        assert vault in self._decrypted_keys
+        if 'sign' not in self._decrypted_keys[vault]:
+            raise VaultLocked('vault {0!r} is locked'.format(vault))
+        assert vault in self._secret_cache
+        secret = self._secret_cache[vault].search(uuid)
+        if secret is None:
             return
-        self._private_keys[uuid] = []
-        self._clear_version_cache(uuid)
-        self._log.debug('locked vault "{}" ({})', uuid, self.vaults[uuid]['name'])
-        self.raise_event('VaultLocked', self.vaults[uuid])
+        verid = secret['version']
+        assert verid in self._secret_index[vault]
+        itmid = self._secret_index[vault][verid]
+        # Read the full item from disk, as the _secret_cache only contains
+        # fields marked explicitly as cached. This is done to allow for bigger
+        # items, and also not to have the full set of sensitive data in memory
+        # all the time.
+        item = self.store.findone('items', '$id = ?', (itmid,))
+        if not va_item.match(item) or \
+                not va_enc.match(item) or \
+                not self._verify_item(vault, item) or \
+                not self._decrypt_item(vault, item) or \
+                not va_secret.match(item):
+            self._log.error('item {!r} is corrupt in store', abbr(itmid))
+            return
+        self._log.debug('item {!r} was loaded from store', abbr(itmid))
+        return copy_dict(item['payload'])
 
-    def vault_is_locked(self, uuid):
-        """Return whether a vault is locked."""
-        if uuid not in self.vaults:
-            raise NotFound('No such vault: {0}'.format(uuid))
-        assert uuid in self._private_keys
-        return len(self._private_keys[uuid]) == 0
+    def get_secrets(self, vault, after=None, maxitems=1000):
+        """Return a all current secrets in a vault.
 
-    # Versions
+        This returns a list of partial secrets. A partial secret contains the
+        envelope, and the fields that are cached. The fields to cache for a
+        vault is specified using the *cache_fields* argument to
+        :meth:`unlock_vault`. To get a full secret, use :meth:`get_secret`.
+        """
+        if vault not in self._vaults:
+            raise NotFound('no such vault: {0!r}'.format(vault))
+        assert vault in self._decrypted_keys
+        if 'sign' not in self._decrypted_keys[vault]:
+            raise VaultLocked('vault {0!r} is locked'.format(vault))
+        assert vault in self._secret_cache
+        # This returns the partial secrets only containing cached fields.
+        secrets = []
+        for (uuid, secret) in self._secret_cache[vault].items(start=after):
+            if after is None or uuid > after:
+                secrets.append(copy_dict(secret))
+            if len(secrets) == maxitems:
+                break
+        return secrets
 
-    def get_version(self, vault, uuid):
-        """Get a single current version."""
-        if vault not in self.vaults:
-            raise NotFound('No such vault: {0}'.format(vault))
-        assert vault in self._private_keys
-        if len(self._private_keys[vault]) == 0:
-            raise VaultLocked('Vault {0} is locked'.format(vault))
-        assert vault in self._version_cache
-        item = self._version_cache[vault].get(uuid)
-        version = self._get_version(item) if item else None
-        return version
+    def update_secret(self, vault, uuid, update):
+        """Update an existing secret.
 
-    def get_versions(self, vault):
-        """Return a list of all current versions."""
-        if vault not in self.vaults:
-            raise NotFound('No such vault: {0}'.format(vault))
-        assert vault in self._private_keys
-        if len(self._private_keys[vault]) == 0:
-            raise VaultLocked('Vault {0} is locked'.format(vault))
-        assert vault in self._version_cache
-        versions = []
-        for item in self._version_cache[vault].values():
-            version = self._get_version(item)
-            versions.append(version)
-        return versions
+        The *update* argument must be a dictionary with the updates to perform.
+        It has the same format as the *template* argument to
+        :meth:`create_secret`. The update is relative: only fields that are
+        specified are updated. To remove a field, set its value to ``None``.
 
-    def add_version(self, vault, version):
-        """Add a new version."""
-        if vault not in self.vaults:
-            raise NotFound('No such vault: {0}'.format(vault))
-        assert vault in self._private_keys
-        if len(self._private_keys[vault]) == 0:
-            raise VaultLocked('Vault {0} is locked'.format(vault))
-        assert vault in self._version_cache
-        version['id'] = crypto.random_uuid()
-        item = self._new_version(vault, version)
+        The updated secret is returned.
+        """
+        parent = self.get_secret(vault, uuid)
+        if parent is None:
+            raise NotFound('no such secret: {0!r}'.format(uuid))
+        vres = va_secret_tmpl.validate(update)
+        if vres.error:
+            raise ModelError('illegal update: {!r}'.format(vres.error))
+        template = copy_dict(parent, include=('fields',))
+        update_dict(template, update)
+        item = self._new_secret(vault, template, parent)
         self._encrypt_item(vault, item)
         self._add_origin(vault, item)
         self._sign_item(vault, item)
-        self.import_item(vault, item)
-        version = self._get_version(item)
-        return version
+        count = self.import_items(vault, [item])
+        assert count == 1
+        return copy_dict(item['payload'])
+ 
+    def delete_secret(self, vault, uuid):
+        """Delete an existing secret.
 
-    def replace_version(self, vault, version):
-        """Update an existing version."""
-        if vault not in self.vaults:
-            raise NotFound('No such vault: {0}'.format(vault))
-        assert vault in self._private_keys
-        if len(self._private_keys[vault]) == 0:
-            raise VaultLocked('Vault {0} is locked'.format(vault))
-        assert vault in self._version_cache
-        uuid = version['id']
-        if uuid not in self._version_cache[vault]:
-            raise NotFound('No such version: {0}'.format(uuid))
-        parent = self._version_cache[vault][uuid]['payload']['id']
-        item = self._new_version(vault, version, parent=parent)
+        Deleting a secrets adds a new version for the secret without and fields
+        and with the "deleted" attribute in the envelope set to ``True``.
+
+        A deleted secret may be undeleted at any time by adding a new version
+        for it, using :meth:`update_secret`.
+
+        The new version is returned.
+        """
+        parent = self.get_secret(vault, uuid)
+        if parent is None:
+            raise NotFound('no such secret: {0!r}'.format(uuid))
+        item = self._new_secret(vault, {'deleted': True, 'fields': {}}, parent)
         self._encrypt_item(vault, item)
         self._add_origin(vault, item)
         self._sign_item(vault, item)
-        self.import_item(vault, item)
-        version = self._get_version(item)
-        return version
+        count = self.import_items(vault, [item])
+        assert count == 1
+        return copy_dict(item['payload'])
+ 
+    def get_secret_history(self, vault, uuid, full=False):
+        """Return the history for a secret.
 
-    def delete_version(self, vault, version):
-        """Delete a version."""
-        if vault not in self.vaults:
-            raise NotFound('No such vault: {0}'.format(vault))
-        assert vault in self._private_keys
-        if len(self._private_keys[vault]) == 0:
-            raise VaultLocked('Vault {0} is locked'.format(vault))
-        assert vault in self._version_cache
-        uuid = version['id']
-        if uuid not in self._version_cache[vault]:
-            raise NotFound('No such version: {0}'.format(uuid))
-        parent = self._version_cache[vault][uuid]['payload']['id']
-        # XXX: revisit payload of item
-        item = self._new_version(vault, version, parent=parent)
-        item['payload']['deleted'] = True
-        self._encrypt_item(vault, item)
-        self._add_origin(vault, item)
-        self._sign_item(vault, item)
-        self.import_item(vault, item)
-        version = self._get_version(item)
-        return version
+        If *full* is False, the linear history is returned. This is a sequence
+        of the current version (as returned by :meth:`get_secret`), followed by
+        its ancestors, in-order.
 
-    def get_version_history(self, vault, uuid):
-        """Return the history for version `uuid`."""
-        if vault not in self.vaults:
-            raise NotFound('No such vault: {0}'.format(vault))
-        assert vault in self._private_keys
-        if len(self._private_keys[vault]) == 0:
-            raise VaultLocked('Vault {0} is locked'.format(vault))
+        If *full* is True, then the full history is returned. This is an
+        unordered sequence of all versions of the secret. It includes abandoned
+        branches in the history.
+
+        In both cases, there may be deleted versions in the result. These have
+        the "deleted" attribute in the envelope set to ``True``.
+        """
+        if vault not in self._vaults:
+            raise NotFound('no such vault: {0!r}'.format(vault))
+        assert vault in self._decrypted_keys
+        if 'sign' not in self._decrypted_keys[vault]:
+            raise VaultLocked('vault {0!r} is locked'.format(vault))
         assert vault in self._linear_history
         if uuid not in self._linear_history[vault]:
-            raise NotFound('No such version: {0}'.format(uuid))
-        history = [ self._get_version(item)
-                    for item in self._linear_history[vault][uuid] ]
-        return history
-
-    def get_version_item(self, vault, uuid):
-        """Get the most recent item for a version (including
-        deleted versions)."""
-        if vault not in self.vaults:
-            raise NotFound('No such vault: {0}'.format(vault))
-        assert vault in self._private_keys
-        if len(self._private_keys[vault]) == 0:
-            raise VaultLocked('Vault {0} is locked'.format(vault))
-        assert vault in self._version_cache
-        version = self._linear_history[vault].get(uuid)
-        if version:
-            version = version[0].copy()
-        return version
-
-    # Pairing
-
-    def get_certificate(self, vault, node):
-        """Return a certificate for `node` in `vault`, if there is one."""
-        if vault not in self.vaults:
-            raise NotFound('No such vault: {0}'.format(vault))
-        if node not in self._trusted_certs[vault]:
-            return
-        return self._trusted_certs[vault][node][0]
-
-    def get_auth_key(self, vault):
-        """Return the private authentication key for `vault`."""
-        if vault not in self.vaults:
-            raise NotFound('No such vault: {0}'.format(vault))
-        vault = self.vaults[vault]
-        key = base64.decode(vault['keys']['auth']['private'])
-        return key
-
-    def add_certificate(self, vault, certinfo):
-        """Add a certificate to a vault.
-
-        Adding a certificate to a vault establishes a trust relationship
-        between this node and the node that we are generating the certifcate
-        for. If the certificate is "synconly", then only synchronization with
-        us is allowed. If the certificate is not synconly, in addition,
-        existing versions will be re-encrypted to the newly added node, and new
-        versions will be encrypted to it automatically. The new node may also
-        introduce other new nodes into the vault. 
-        """
-        if vault not in self.vaults:
-            raise NotFound('No such vault: {0}'.format(vault))
-        assert vault in self._private_keys
-        if len(self._private_keys[vault]) == 0:
-            raise VaultLocked('Vault {0} is locked'.format(vault))
-        vres = va_certinfo.validate(certinfo)
-        if not vres:
-            raise ValidationError('Invalid certificate: {0}'.format(vres.error))
-        item = self._new_certificate(vault, **certinfo)
-        self._add_origin(vault, item)
-        self._sign_item(vault, item)
-        self.import_item(vault, item)
-        synconly = certinfo.get('restrictions', {}).get('synconly')
-        if not synconly:
-            for version in self.get_versions(vault):
-                if not version.get('deleted'):
-                    self.replace_version(vault, version)
-        return item
+            raise NotFound('no such secret: {0!r}'.format(uuid))
+        hist = self._full_history if full else self._linear_history
+        return copy_dict(hist[vault][uuid])
 
     # Synchronization
 
+    def get_auth_key(self, vault):
+        """Return the private authentication key for *vault*.
+
+        The authentication key is always available, even if the vault is
+        locked. This is unlike the sign and encryption keys, that are only
+        available when a vault is unlocked.
+        """
+        if vault not in self._vaults:
+            raise NotFound('no such vault: {0!r}'.format(vault))
+        return self._decrypted_keys[vault]['auth']['private']
+
+    def get_public_keys(self, vault):
+        """Return a dictionary with all public keys."""
+        if vault not in self._vaults:
+            raise NotFound('no such vault: {0!r}'.format(vault))
+        keys = {}
+        for keyname,key in self._vaults[vault]['keys'].items():
+            keys[keyname] = copy_dict(key, include=('public', 'keytype'))
+        return keys
+
     def get_vector(self, vault):
-        """Return a vector containing the latest versions for each node that
+        """Return a vector containing the latest items for each node that
         we know of."""
-        if vault not in self.vaults:
-            raise NotFound('No such vault: {0}'.format(vault))
-        vector = self.store.execute('items', """
+        if vault not in self._vaults:
+            raise NotFound('no such vault: {0!r}'.format(vault))
+        vector = self.store.execute("""
                     SELECT $origin$node,MAX($origin$seqnr)
                     FROM items
                     WHERE $vault = ?
                     GROUP BY $origin$node""", (vault,))
         return vector
 
+    def get_certificate(self, vault, node):
+        """Return a certificate for `node` in `vault`, if there is one."""
+        if vault not in self._vaults:
+            raise NotFound('no such vault: {0!r}'.format(vault))
+        if node not in self._trusted_certs[vault]:
+            return
+        return copy_dict(self._trusted_certs[vault][node])
+
+    def create_certificate(self, vault, template):
+        """Create a new certificate and import it into the vault.
+
+        This establishes a trust relationship with the certificate's node. If
+        the certificate has the "decrypt_secret" access right then new versions
+        for all secrets are added with a decryption key for the new node.
+        """
+        if vault not in self._vaults:
+            raise NotFound('no such vault: {0!r}'.format(vault))
+        assert vault in self._decrypted_keys
+        if 'sign' not in self._decrypted_keys[vault]:
+            raise VaultLocked('vault {0!r} is locked'.format(vault))
+        vres = va_cert_tmpl.validate(template)
+        if vres.error:
+            raise ValidationError('invalid cert: {0}'.format(vres.error))
+        # Before adding the new cert, find the nodes able to decrypt now.
+        old_decrypt = set()
+        for node,cert in self._trusted_certs[vault].items():
+            if cert['keys'].get('encrypt'):
+                old_decrypt.add(node)
+        # Add the new cert
+        item = self._new_certificate(vault, template)
+        self._add_origin(vault, item)
+        self._sign_item(vault, item)
+        self._log.info('created cert {!r} for node {!r}',
+                       abbr(item['payload']['id']), abbr(item['payload']['node']))
+        count = self.import_items(vault, [item])
+        assert count == 1
+        # Determine the set of nodes able to decrypt after the cert has been
+        # added. The cert may be for a new node with a "sign" key, but it could
+        # also have made existing certs valid.
+        new_decrypt = set()
+        for node,cert in self._trusted_certs[vault].items():
+            if cert['keys'].get('encrypt'):
+                new_decrypt.add(node)
+        assert new_decrypt.issuperset(old_decrypt)
+        new_nodes = new_decrypt - old_decrypt
+        if new_nodes:
+            self._log.info('{} new nodes got the ability to decrypt', len(new_nodes))
+            self._readdress_secrets(vault)
+        else:
+            self._log.info('no changes in set of nodes that can decrypt')
+        return copy_dict(item['payload'])
+
     def get_items(self, vault, vector=None):
         """Return the items in `vault` that are newer than `vector`."""
-        if vault not in self.vaults:
-            raise NotFound('No such vault: {0}'.format(vault))
+        if vault not in self._vaults:
+            raise NotFound('no such vault: {0!r}'.format(vault))
         if vector is not None:
             if not isinstance(vector, (tuple, list)):
-                raise ModelError('Illegal vector')
+                raise ModelError('illegal vector')
             for elem in vector:
                 if not isinstance(elem, (tuple, list)) or len(elem) != 2 or \
-                        not isinstance(elem[0], compat.string_types) or \
-                        not isinstance(elem[1], compat.integer_types):
-                    raise ModelError('Illegal vector')
+                        not isinstance(elem[0], six.string_types) or \
+                        not isinstance(elem[1], six.integer_types):
+                    raise ModelError('illegal vector')
         query = '$vault = ?'
         args = [vault]
         if vector is not None:
-            nodes = self.store.execute('items',
-                            'SELECT DISTINCT $origin$node FROM items')
+            nodes = self.store.execute('SELECT DISTINCT $origin$node FROM items')
             terms = []
             vector = dict(vector)
             for node, in nodes:
                 if node in vector:
                     terms.append('($origin$node = ? AND $origin$seqnr > ?)')
-                    args.append(node); args.append(vector[node])
+                    args += [node, vector[node]]
                 else:
                     terms.append('$origin$node = ?')
                     args.append(node)
             query += ' AND (%s)' % ' OR '.join(terms)
         return self.store.findall('items', query, args)
 
-    def import_item(self, vault, item, notify=True):
-        """Import a single item."""
-        if vault not in self.vaults:
-            raise NotFound('No such vault: {0}'.format(vault))
-        vres = va_item.validate(item)
-        if not vres:
-            raise ValidationError('Invalid item: {0}'.format(vres.error))
-        ptype = item['payload']['type']
-        if ptype == 'Certificate':
-            vres = va_cert.validate(item)
-            if not vres:
-                raise ValidationError('Invalid certificate: {0}'.format(vres.error))
-            self.store.insert('items', item)
-            self._log.debug('imported certificate, re-calculating trust')
-            self._calculate_trust(item['vault'])
-            # Find items that are signed by this certificate
-            query = "$vault = ? AND $payload$type = 'EncryptedItem'" \
-                    " AND $origin$node = ?"
-            args = (vault, item['payload']['node'])
-            items = self.store.findall('items', query, args)
-        elif ptype == 'EncryptedItem':
-            vres = va_encitem.validate(item)
-            if not vres:
-                raise ValidationError('Invalid encrypted item: {0}'.format(vres.error))
-            self.store.insert('items', item)
-            items = [item]
-        else:
-            raise ValidationError('Unknown payload type: {0}'.format(ptype))
-        assert vault in self._private_keys
-        if len(self._private_keys[vault]) == 0:
-            return
-        # See if the wider set of certificates exposed some versions
-        versions = []
-        for item in items:
-            if not self._verify_item(vault, item) or \
-                    not self._decrypt_item(vault, item) or \
-                    not va_decitem.match(item) or \
-                    not va_version.match(item):
-                continue
-            versions.append(item)
-        self._log.debug('updating version cache for {} versions', len(versions))
-        self._update_version_cache(versions, notify=notify)
+    def import_items(self, vault, items):
+        """Import multiple items.
+        
+        The items are validated and stored. If required, the certificate and
+        secret caches are updated.
 
-    def import_items(self, vault, items, notify=True):
-        """Import multiple items. This is more efficient than calling
-        import_item() multiple times. Items with errors are silently skipped
-        and do not prevent good items to be imported."""
-        if vault not in self.vaults:
-            raise NotFound('No such vault: {0}'.format(vault))
+        The return value is the number of items imported.
+        """
+        if vault not in self._vaults:
+            raise NotFound('no such vault: {0!r}'.format(vault))
         self._log.debug('importing {} items', len(items))
-        items = [ item for item in items if va_item.match(item) ]
+        # Check all items are for the indicated vault and well formed
+        items = [item for item in items if item['vault'] == vault]
+        self._log.debug('{} items are for the correct vault', len(items))
+        items = [item for item in items if va_item.match(item)]
         self._log.debug('{} items are well formed', len(items))
         # Weed out items we already have.
-        vector = dict(self.get_vector(vault))
-        items = [ item for item in items
-                  if item['origin']['seqnr']
-                        > vector.get(item['origin']['node'], -1) ]
+        oldvec = self.get_vector(vault)
+        vec = dict(oldvec)
+        isnew = lambda it: it['origin']['seqnr'] > vec.get(it['origin']['node'], -1)
+        items = [item for item in items if isnew(item)]
         self._log.debug('{} items are new', len(items))
-        # If we are adding certs we need to add them first and re-calculate
-        # trust before adding the other items.
-        certs = [ item for item in items
-                  if item['payload']['type'] == 'Certificate'
-                        and va_cert.match(item) ]
-        if certs:
-            # It is safe to import any certificate. Certificates require
-            # a trusted signature before they are considered trusted.
-            with self.store.begin():
-                for item in certs:
-                    self.store.insert('items', item)
-            self._calculate_trust(vault)
-            self._log.debug('imported {} certificates and recalculated trust', len(certs))
-            # Some items may have become exposed by the certs. Find items
-            # that were signed by the certs we just added.
-            query = "$vault = ? AND $payload$type = 'EncryptedItem'"
-            query += ' AND (%s)' % ' OR '.join([ '$origin$node = ?' ] * len(certs))
-            args = [ vault ]
-            args += [ cert['payload']['node'] for cert in certs ]
-            certitems = self.store.findall('items', query, args)
-            self._log.debug('{} items are possibly touched by these certs', len(certitems))
-        else:
-            certitems = []
-        # Now see which items are valid under the possibly wider set of
-        # certificates and add them
-        encitems = [ item for item in items
-                     if item['payload']['type'] == 'EncryptedItem'
-                            and va_encitem.match(item) ]
+        # Import any cert or secret that is well formed and new. It is safe to
+        # do so, because merely being in the database doesn't convey any trust.
+        # All items need to be signed by a node with a certificate that has valid
+        # trust chain back to ourselves.
+        iscert = lambda it: it['payload']['type'] == 'Certificate' and va_cert.match(it)
+        certs = [item for item in items if iscert(item)]
+        self._log.debug('{} new items are well formed certificates', len(certs))
+        isenc = lambda it: it['payload']['type'] == 'Encrypted' and va_enc.match(it)
+        encitems = [item for item in items if isenc(item)]
+        self._log.debug('{} new items are well formed encrypted items', len(encitems))
         with self.store.begin():
+            for item in certs:
+                self.store.insert('items', item)
             for item in encitems:
                 self.store.insert('items', item)
-        self._log.debug('imported {} encrypted items', len(encitems))
-        # Update version and history caches (if the vault is unlocked)
-        assert vault in self._private_keys
-        if len(self._private_keys[vault]) > 0:
-            versions = []
+        self._log.debug('{} items were added', len(certs) + len(encitems))
+        # Now see what caches need to be updated. First figure out certs. If
+        # any got added, we need to re-establish the set of valid signer certs. 
+        if certs:
+            old_signers = set()
+            for node,cert in self._trusted_certs[vault].items():
+                if cert['keys'].get('sign'):
+                    old_signers.add(node)
+            self._load_certificates(vault)
+            new_signers = set()
+            for node,cert in self._trusted_certs[vault].items():
+                if cert['keys'].get('sign'):
+                    new_signers.add(node)
+            assert new_signers.issuperset(old_signers)
+            new_signers -= old_signers
+            self._log.debug('{} new nodes got the ability to sign', len(new_signers))
+        else:
+            new_signers = set()
+        # If the vault is unlocked, verify and decrypt the items, and update
+        # the secrets cache. If the vault is locked, we are done. The
+        # verification will be done by _load_secrets() when the vault is unlocked.
+        if 'sign' in self._decrypted_keys[vault]:
+            self._log.debug('vault is unlocked, updating secret cache')
+            # Now update the secret cache for 1. any secret that got added, and
+            # 2. any secret that is signed by a new signer node.
+            if new_signers:
+                query = "$vault = ? AND $payload$type = 'Encrypted'"
+                query += " AND ({0})".format(" OR ".join(["$origin$node = ?"] * len(new_signers)))
+                args = [vault] + list(new_signers)
+                certitems = self.store.findall('items', query, args)
+                self._log.debug('{} items are possibly touched by the new certs', len(certitems))
+            else:
+                certitems = []
+            secrets = []
             for item in itertools.chain(encitems, certitems):
                 if not self._verify_item(vault, item) or \
                         not self._decrypt_item(vault, item) or \
-                        not va_decitem.match(item) or \
-                        not va_version.match(item):
+                        not va_secret.match(item):
                     continue
-                versions.append(item)
-            self._update_version_cache(versions, notify=notify)
+                secrets.append(item)
+            updated = self._update_secret_cache(vault, secrets)
+            self._log.debug('updated secret cache with {} secrets', len(secrets))
+            self._log.debug('these results in {} new active secrets', len(updated))
+            for i in range(0, len(updated), 100):
+                batch = [copy_dict(s) for s in updated[i:i+100]]
+                self.raise_event('SecretsAdded', vault, batch)
+        else:
+            self._log.debug('vault is locked, not updating secret cache')
+        self.raise_event('ItemsAdded', vault, oldvec)
         return len(certs) + len(encitems)

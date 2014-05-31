@@ -18,6 +18,7 @@ import argparse
 import subprocess
 import binascii
 
+import gruvi
 from gruvi import jsonrpc
 
 from . import platform, util, logging, crypto
@@ -110,7 +111,7 @@ def connect_backend(options):
         runinfo = json.loads(buf)
         if not isinstance(runinfo, dict):
             break
-        addr = util.paddr(runinfo['listen'])
+        addr = gruvi.paddr(runinfo['listen'])
         try:
             sock = util.create_connection(addr, timeout=0.2)
         except (OSError, IOError) as e:

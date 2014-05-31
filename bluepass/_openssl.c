@@ -594,7 +594,7 @@ static PyMethodDef openssl_methods[] =
 PyDoc_STRVAR(openssl_doc, "wrapped OpenSSL methods");
 
 
-MOD_INITFUNC(openssl)
+MOD_INITFUNC(_openssl)
 {
     PyObject *Pmodule, *Pdict;
 
@@ -603,11 +603,11 @@ MOD_INITFUNC(openssl)
     if (!PyImport_ImportModule("_ssl"))
         return MOD_ERROR;
 
-    INIT_MODULE(Pmodule, "openssl", openssl_doc, openssl_methods);
+    INIT_MODULE(Pmodule, "_openssl", openssl_doc, openssl_methods);
 
     if ((Pdict = PyModule_GetDict(Pmodule)) == NULL)
         return MOD_ERROR;
-    if ((openssl_Error = PyErr_NewException("openssl.Error", NULL, NULL)) == NULL)
+    if ((openssl_Error = PyErr_NewException("_openssl.Error", NULL, NULL)) == NULL)
         return MOD_ERROR;
     if (PyDict_SetItemString(Pdict, "Error", openssl_Error) == -1)
         return MOD_ERROR;

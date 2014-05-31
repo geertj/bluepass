@@ -34,8 +34,7 @@ def get_json_value(doc, path):
     return obj
 
 
-class StoreError(Error):
-    """Database error."""
+StoreError = sqlite3.Error
 
 
 class Store(object):
@@ -170,7 +169,7 @@ class Store(object):
         self.collections.append(name)
         self.indices[name] = []
 
-    _re_path = re.compile('(?<!_)(\$[a-zA-Z_][a-zA-Z0-9_]*)+')
+    _re_path = re.compile('(?<!_)((\$[a-zA-Z_][a-zA-Z0-9_]*)+)(?!\$)')
 
     def create_index(self, collection, path, valuetype='TEXT', modifier=''):
         """Create a new index on a collection.

@@ -11,7 +11,7 @@ from __future__ import absolute_import, print_function
 import os
 import json
 
-from tests.support import *
+from support import *
 from bluepass.store import *
 
 
@@ -19,12 +19,14 @@ class TestStore(UnitTest):
     """Unit test suite for Store."""
 
     def setUp(self):
+        super(TestStore, self).setUp()
         # Each test gets a fresh store.
         self.filename = self.tempname()
         self.store = Store(self.filename)
         self.store.create_collection('items')
 
     def tearDown(self):
+        super(TestStore, self).tearDown()
         self.store.close()
 
     def test_insert(self):

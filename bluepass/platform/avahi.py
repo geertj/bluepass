@@ -10,8 +10,8 @@ import socket
 import logging
 
 import gruvi
-from gruvi import txdbus, compat
-from gruvi.dbus import DBusClient, DBusError
+from gruvi import txdbus
+from gruvi.dbus import DbusClient, DbusError
 from bluepass.locator import ZeroconfLocationSource, LocationError
 
 # We do not import "avahi" because it depends on python-dbus which is
@@ -77,7 +77,7 @@ class DBusHandler(object):
     def protocol(self):
         return self.local.protocol
 
-    def __call__(self, message, protocol, transport):
+    def __call__(self, message, transport, protocol):
         if not isinstance(message, txdbus.SignalMessage):
             return
         for handler in self.signal_handlers:
@@ -110,10 +110,10 @@ class AvahiHandler(DBusHandler):
         try:
             reply = self.protocol.call_method(DBUS_NAME, path, interface, method,
                                               signature=signature, args=args)
-        except DBusError as e:
+        except DbusError as e:
             self.logger.error('D-BUS error for method %s: %s', method, str(e))
         else:
-            return reply
+            return reply[0] if len(reply) == 1 else reply
 
     @signal_handler(interface=IFACE_SERVICE_BROWSER)
     def ItemNew(self, *args):
@@ -171,7 +171,7 @@ class AvahiLocationSource(ZeroconfLocationSource):
         """Constructor."""
         super(AvahiLocationSource, self).__init__()
         handler = AvahiHandler(self._avahi_event)
-        self.client = DBusClient(handler)
+        self.client = DbusClient(handler)
         self.client.connect('system')
         self.logger = logging.getLogger(__name__)
         self.callbacks = []
@@ -185,11 +185,11 @@ class AvahiLocationSource(ZeroconfLocationSource):
         try:
             reply = self.client.call_method(DBUS_NAME, path, interface, method,
                                             signature=signature, args=args)
-        except DBusError as e:
+        except DbusError as e:
             msg = 'Encounted a D-BUS error for method %s: %s'
             self.logger.error(msg, method, str(e))
             raise LocationError(msg % (method, str(e)))
-        return reply
+        return reply[0] if len(reply) == 1 else reply
 
     def _run_callbacks(self, event, *args):
         """Run all registered callbacks."""

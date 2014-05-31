@@ -100,7 +100,7 @@ def accept(la, *tokens):
         return shift(la)[1]
 
 def expect(la, *tokens):
-    """If the next token in the lookaheda list *la* is in *tokens*, then return
+    """If the next token in the lookahead list *la* is in *tokens*, then return
     the lexeme. Otherwise, raise a ValueError exception."""
     if la[0][0] in tokens:
         return shift(la)[1]

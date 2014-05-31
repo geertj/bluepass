@@ -3,7 +3,7 @@
 # Geert Jansen.
 #
 # Bluepass is free software available under the GNU General Public License,
-# version 3. See the file LICENSE distributed with this file for the exact
+# secret 3. See the file LICENSE distributed with this file for the exact
 # licensing terms.
 
 from __future__ import absolute_import, print_function
@@ -12,32 +12,24 @@ import gruvi
 from gruvi import jsonrpc, switchpoint
 from gruvi.jsonrpc import JsonRpcServer
 
-from . import util, json, crypto
+from . import util, json, crypto, errors
 from .factory import *
-from .errors import *
+from .errors import AuthenticationFailed
 from .model import *
 from .locator import *
 from .passwords import *
 from .syncapi import *
-from .jsonrpc import *
+from .rpckit import RpcHandler, RpcError, route
 from ._version import version_info
 
 
-# These exceptions are passed through to API consumers as JSON-RPC error
-# responses. List them from general to specific (the last match is used).
+class ControlApiHandler(RpcHandler):
+    """Control API.
 
-_errors = [(AuthenticationFailed, jsonrpc.SERVER_ERROR-1),
-    (ValidationError, jsonrpc.SERVER_ERROR-2),
-    (NotFound, jsonrpc.SERVER_ERROR-3),
-    (ModelError, jsonrpc.SERVER_ERROR-20),
-    (VaultLocked, jsonrpc.SERVER_ERROR-21),
-    (InvalidPassword, jsonrpc.SERVER_ERROR-22),
-    (LocationError, jsonrpc.SERVER_ERROR-30),
-    (SyncApiError, jsonrpc.SERVER_ERROR-40)]
-
-
-class ControlApiHandler(JsonRpcHandler):
-    """The JSON-RPC control API."""
+    This handler implements the Bluepass control API. The control API is a
+    full-functionality JSON-RPC API that is used by "fat" clients like the Qt
+    frontend.
+    """
 
     def __init__(self, model=None, locator=None, publisher=None, backend=None):
         super(ControlApiHandler, self).__init__()
@@ -48,167 +40,179 @@ class ControlApiHandler(JsonRpcHandler):
         self._backend = backend or instance(Backend)
         self._pairings = {}
 
-    @property
-    def model(self):
-        return self._model
+    def pre_request_hook(self, method, *args):
+        # This hook is used to authenticate the request.
+        authenticated = self.data.get('authenticated', False)
+        if not authenticated and method != 'login':
+            raise RpcError('Not authenticated')
 
-    @property
-    def locator(self):
-        return self._locator
-
-    @property
-    def publisher(self):
-        return self._publisher
-
-    @property
-    def backend(self):
-        return self._backend
-
-    def authenticate(self):
-        """Authenticate this request."""
-        return getattr(self.transport, '_ctrlapi_authenticated', False)
-
-    def create_error(self, message, exc):
-        """Create an error reply for *message* based on exception *exc*."""
-        if message.get('id') is None:
-            self._log.exception('uncaught exception in notification handler')
+    def uncaught_exception(self, exc):
+        info = errors.get_error_info(exc)
+        if not info:
             return
-        last_match = None
-        for tup in _errors:
-            if isinstance(exc, tup[0]):
-                last_match = tup
-        if last_match is None:
-            self._log.exception('uncaught exception in method handler')
-            return jsonrpc.create_error(message, jsonrpc.SERVER_ERROR)
-        message = exc.args[0] if exc.args else exc.__doc__
-        return jsonrpc.create_error(last_match[1], message)
+        detail = {'error_name': info.name}
+        detail.update(info.detail)
+        raise RpcError(info.code, info.name, detail)
 
     # General
 
-    @method('[str@>=16]')
-    @anonymous
-    def login(self, cookie):
-        token = self.model.get_token(cookie)
+    @route('login', args='[str@>=16]')
+    def login(self, tokenid):
+        """Login to the control API.
+
+        The *tokenid* argument must be the ID of a valid authentication token.
+        """
+        token = self._model.get_token(tokenid)
         if token is None:
-            return False
+            raise AuthenticationFailed
         expires = token.get('expires')
         if expires and expires > time.time():
-            return False
-        rights = token.get('rights', {})
-        if not rights.get('control_api'):
-            return False
-        self.transport._ctrlapi_authenticated = True
+            raise AuthenticationFailed
+        allow = token.get('allow', {})
+        if not allow.get('control_api'):
+            raise AuthenticationFailed
+        self.data['authenticated'] = True
+        # XXX: revise this
+        self.protocol._ctrlapi_authenticated = True
         return True
 
-    @method('[]')
+    @route(args='[]')
     def stop(self):
-        self.backend.stop()
+        """Stop the backend."""
+        self._backend.stop()
 
-    @method('[]')
+    @route(args='[]')
     def get_version_info(self):
-        """Get version information.
+        """Get versionsecret information.
 
-        The return value is a dictionary with at least the "version" key in it.
+        The return value is a dictionary containing various versionsecret related
+        fields.
         """
-        return {'version': version_info['version']}
+        return version_info
 
     # Configuration
 
-    @method('[{...}]')
+    @route(args='[{...}]')
     def create_config(self, config):
-        """Create a new configuration document."""
-        return self.model.create_config(config)
-
-    @method('[str]')
-    def get_config(self, name):
-        """Return the configuration object.
-
-        The configuration object is a dictionary that can be used by frontends
-        to store configuration data.
+        """Create a new configuration document.
+        
+        The *config* argument must be a dictionary containing at least a
+        "name" key. The name must be unique across all configuration documents.
         """
-        return self.model.get_config(name)
+        return self._model.create_config(config)
 
-    @method('[{...}]')
-    def update_config(self, config):
-        """Update the configuration object."""
-        return self.model.update_config(config)
+    @route(args='[str]')
+    def get_config(self, name):
+        """Return a configuration document.
+
+        Return the configuration document with name *name* as a Python
+        dicarionaty, or ``None`` if the document does not exist.
+        """
+        return self._model.get_config(name)
+
+    @route(args='[{...}]')
+    def update_config(self, name, config):
+        """Update a configuration object."""
+        return self._model.update_config(name, config)
 
     # Vaults
 
-    @method('[str, str]')
-    def create_vault(self, name, password):
+    @route(args='[{...}]')
+    def create_vault(self, template):
         """Create a new vault.
 
-        The vault will have the name *name*. The vault's private keys will be
-        encrypted with *password*.
+        The vault's name will be *name*, and its private keys will be encrypted
+        with *password*. The vault will start unlocked.
 
-        Vault creation is asynchronous. This method will return the vault UUID.
-        When the vault creation is done, a "VaultCreationComplete" notification
-        is sent.
+        Vault creation is asynchronous. This method will start the process in
+        the background and return immediately with the vault's uuid.  When the
+        vault's creation is complete, a "VaultCreationComplete" notification is
+        sent with arguments (uuid, success, message).
         """
         uuid = crypto.random_uuid()
-        def complete_create_vault(message, protocol, transport):
+        template['id'] = uuid
+        def complete_create_vault(send_notification):
             try:
-                vault = self.model.create_vault(name, password, uuid)
+                vault = self._model.create_vault(template)
             except Exception as e:
-                status = False
-                detail = self.create_error(message, e) or {}
-                if not detail:
-                    self._log.exception('uncaught exception when creating vault')
+                self._log.error(str(e))
+                success = False
+                info = errors.get_error_info(e)
+                message = info.message if info is not None else ''
             else:
-                status = True
-                detail = vault
-            protocol.send_notification(transport, 'VaultCreationComplete', uuid, status, detail)
-        gruvi.spawn(complete_create_vault, self.message, self.protocol, self.transport)
+                success = True
+                message = 'vault created successfully'
+            send_notification('VaultCreationComplete', uuid, success, message)
+        # Pass reference to send_notification because self.protocol is fiber-local
+        gruvi.spawn(complete_create_vault, self.protocol.send_notification)
         return uuid
 
-    @method('[uuid]')
+    @route(args='[uuid]')
     def get_vault(self, uuid):
         """Return the vault *uuid*, or null if it doesn't exist."""
-        return self.model.get_vault(uuid)
+        return self._model.get_vault(uuid)
 
-    @method('[]')
+    @route(args='[]')
     def get_vaults(self):
-        """Return an array of all vaults."""
-        return self.model.get_vaults()
+        """Return a list of all vaults.
 
-    @method('[{...}]')
+        This returns both locked and unlocked vaults. To know the status of an
+        individual vault, use :meth:`get_vault_status`.
+        """
+        return self._model.get_vaults()
+
+    @route(args='[uuid]')
+    def get_vault_status(self, uuid):
+        """Return the status of the vault with ID *uuid*.
+
+        The status will be either ``'LOCKED'`` or ``'UNLOCKED'``.
+        """
+        return self._model.get_vault_status(uuid)
+
+    @route(args='[{...}]')
     def update_vault(self, uuid, update):
-        """Update a vault.
+        """Update the vault with ID *uuid*.
 
-        The vault *uuid* is updated with attributes from the object *vault*.
-        Only the *name* and *password* attributes can be updated.
+        The *update* argument specifies the update to apply. Currently only the
+        *name* and *password* attributes can be updated.
+
+        Return the updated vault.
         """
-        return self.model.update_vault(uuid, update)
+        return self._model.update_vault(uuid, update)
 
-    @method('[uuid]')
+    @route(args='[uuid]')
     def delete_vault(self, uuid):
-        """Delete a vault.
+        """Delete a vault with ID *uuid*.
 
-        This also deletes all items in the vault.
+        All items in the vault will be deleted. This action in irreversible.
         """
-        self.model.delete_vault(uuid)
+        self._model.delete_vault(uuid)
 
-    @method('[uuid]')
+    @route(args='[uuid]')
     def get_vault_statistics(self, uuid):
         """Return statistics about a vault.
 
         The return value is a dictionary.
         """
-        return self.model.get_vault_statistics(uuid)
+        return self._model.get_vault_statistics(uuid)
 
-    @method('[uuid, str]')
-    def unlock_vault(self, uuid, password):
+    @route(args='[uuid, str, *[]]')
+    def unlock_vault(self, uuid, password, cache_fields=[]):
         """Unlock a vault.
 
-        The vault *uuid* is unlocked using *password*. This decrypts the
-        private keys that are stored in the store and stores them in memory.
+        The vault with ID *uuid* is unlocked using *password*. An exception is
+        raised if the vault does not exist or if the password is incorrect.
+        
+        Unlockign a vault decrypts the private keys that are stored in the
+        store and stores them in memory. After a vault has been unlocked, its
+        secrets can be read and updated using :meth:`get_secret` and related
+        methods.
 
-        It is not an error to unlock a vault that is already unlocked.
+        It is OK to unlock a vault that is already unlocked.
         """
-        return self.model.unlock_vault(uuid, password)
+        return self._model.unlock_vault(uuid, password, cache_fields)
 
-    @method('[uuid]')
+    @route(args='[uuid]')
     def lock_vault(self, uuid):
         """Lock a vault.
 
@@ -217,84 +221,71 @@ class ControlApiHandler(JsonRpcHandler):
 
         It is not an error to lock a vault that is already locked.
         """
-        return self.model.lock_vault(uuid)
+        return self._model.lock_vault(uuid)
 
-    @method('[uuid]')
-    def vault_is_locked(self, uuid):
-        """Return whether or not the vault *uuid* is locked."""
-        return self.model.vault_is_locked(uuid)
+    # Secrets
 
-    # Versions
+    @route(args='[uuid, uuid]')
+    def get_secret(self, vault, uuid):
+        """Return a secret from a vault.
 
-    @method('[uuid, uuid]')
-    def get_version(self, vault, uuid):
-        """Return a version from a vault.
-
-        The latest version identified by *uuid* is returned from *vault*.  The
-        version is returned as a dictionary. If the version does not exist,
-        ``None`` is returned.
-        
-        In Bluepass, vaults contain versions. Think of a version as an
-        arbitrary object that is versioned and encrypted. A version has at
-        least "id" and "_type" keys. The "id" will stay constant over the
-        entire lifetime of the version. Newer versions supersede older
-        versions. This method call returns the newest instance of the version.
-
-        Versions are the unit of synchronization in our peer to peer
-        replication protocol. They are also the unit of encryption. Both
-        passwords are groups are stored as versions.
+        Search the vault with ID *vault* for a secret with ID *uuid*. If found,
+        the latest version if the secret is returned as a Python dict. If the
+        vault does not exist, an exception is raised. If the secret does not
+        exist, ``None`` is returned.
         """
-        return self.model.get_version(vault, uuid)
+        return self._model.get_secret(vault, uuid)
 
-    @method('[uuid]')
-    def get_versions(self, vault):
-        """Return the newest instances for all versions in a vault.
+    @route(args='[uuid]')
+    def get_secrets(self, vault):
+        """Return all secrets from a vault.
 
-        The return value is a list of dictionaries.
+        This returns a list containing the latest version for each secret in
+        the vault with ID *vault*.
         """
-        return self.model.get_versions(vault)
+        return self._model.get_secrets(vault)
 
-    @method('[uuid, {...}]')
-    def add_version(self, vault, version):
-        """Add a new version to a vault.
+    @route(args='[uuid, {...}]')
+    def create_secret(self, vault, template):
+        """Add a new secret to a vault.
 
-        The *version* parameter must be a dictionary. The version is a new
-        version and should not contain and "id" key yet.
+        The *secret* parameter must be a dictionary. The secret is a new
+        secret and should not contain and "id" key yet.
         """
-        return self.model.add_version(vault, version)
+        return self._model.create_secret(vault, template)
 
-    @method('[uuid, {...}]')
-    def replace_version(self, vault, version):
-        """Update an existing version.
+    @route(args='[uuid, uuid, {...}]')
+    def update_secret(self, vault, uuid, update):
+        """Update an existing secret.
 
-        The *version* parameter should be a dictionary. It must have an "id"
-        of a version that already exists. The version will become the latest
-        version of the specific id.
+        The *secret* parameter should be a dictionary. It must have an "id"
+        of a secret that already exists. The secret will become the latest
+        secret of the specific id.
         """
-        return self.model.replace_version(vault, version)
+        return self._model.update_secret(vault, uuid, update)
 
-    @method('[uuid, {...}]')
-    def delete_version(self, vault, version):
-        """Delete a version from a vault.
+    @route(args='[uuid, uuid]')
+    def delete_secret(self, vault, uuid):
+        """Delete a secret from a vault.
 
-        This create a special updated version of the record with a "deleted"
-        flag set. By default, deleted versions do not show up in the output of
-        :meth:`get_versions`.
+        This create a special updated secret of the record with a "deleted"
+        flag set. By default, deleted secrets do not show up in the output of
+        :meth:`get_secrets`.
         """
-        return self.model.delete_version(vault, version)
+        return self._model.delete_secret(vault, uuid)
 
-    @method('[uuid, uuid]')
-    def get_version_history(self, vault, uuid):
-        """Get the history of a version.
+    @route(args='[uuid, uuid, *bool]')
+    def get_secret_history(self, vault, uuid, full=False):
+        """Get the history of a secret.
 
         This returns a ordered list with the linear history all the way from
-        the current newest instance of the version, back to the first version.
+        the current newest instance of the secret, back to the first secret.
         """
-        return self.model.get_version_history(vault, uuid)
+        return self._model.get_secret_history(vault, uuid, full)
 
     # Password methods
 
-    @method('[str, ...]')
+    @route(args='[str, ...]')
     def generate_password(self, method, *args):
         """Generate a password.
 
@@ -306,7 +297,7 @@ class ControlApiHandler(JsonRpcHandler):
         """
         return instance(PasswordGenerator).generate(method, *args)
 
-    @method('[str, ...]')
+    @route(args='[str, ...]')
     def password_strength(self, method, *args):
         """Return the strength of a password that was generated by
         :meth:`generate_password`.
@@ -318,7 +309,7 @@ class ControlApiHandler(JsonRpcHandler):
 
     # Locator methods
 
-    @method('[]')
+    @route(args='[]')
     def locator_is_available(self):
         """Return whether or not the locator is available.
 
@@ -327,7 +318,7 @@ class ControlApiHandler(JsonRpcHandler):
         locator = instance(Locator)
         return len(locator.sources) > 0
 
-    @method('[]')
+    @route(args='[]')
     def get_neighbors(self):
         """Return current neighbords on the network.
 
@@ -337,7 +328,7 @@ class ControlApiHandler(JsonRpcHandler):
 
     # Pairing methods
 
-    @method('[int]')
+    @route(args='[int]')
     def set_allow_pairing(self, timeout):
         """Be visible on the network for *timeout* seconds.
 
@@ -345,9 +336,9 @@ class ControlApiHandler(JsonRpcHandler):
         initiate a pairing request. The pairing request will still have to be
         approved, and PIN codes needs to be exchanged.
         """
-        self.publisher.set_allow_pairing(timeout)
+        self._publisher.set_allow_pairing(timeout)
 
-    @method('[uuid, str]')
+    @route(args='[uuid, str]')
     def pair_neighbor_step1(self, node, source):
         """Start a new pairing process.
 
@@ -369,7 +360,7 @@ class ControlApiHandler(JsonRpcHandler):
         if model.get_vault(vault):
             raise PairingError('Vault already exists: {0}'.format(vault))
         cookie = crypto.random_cookie()
-        def complete_pair_neighbor_step1(message, protocol, transport):
+        def complete_pair_neighbor_step1(send_notification):
             name = util.gethostname()
             for addr in neighbor['addresses']:
                 client = SyncApiClient()
@@ -383,19 +374,19 @@ class ControlApiHandler(JsonRpcHandler):
                     self._pairings[cookie] = (kxid, neighbor, addr)
                 except Exception as e:
                     self._log.exception('exception in step #1 of pairing')
-                    status = False
-                    detail = self.create_error(message, e) or {}
+                    success = False
+                    info = errors.get_error_info(e)
+                    message = info.message if info is not None else ''
                 else:
-                    status = True
-                    detail = {}
-                protocol.send_notification(transport, 'PairNeighborStep1Completed',
-                                           cookie, status, detail)
+                    success = True
+                    message = 'OK'
+                send_notification('PairNeighborStep1Completed', cookie, success, message)
                 client.close()
                 break
-        gruvi.spawn(complete_pair_neighbor_step1, self.message, self.protocol, self.transport)
+        gruvi.spawn(complete_pair_neighbor_step1, self.protocol.send_notification)
         return cookie
 
-    @method('[str, str, str, str]')
+    @route(args='[str, str, str, str]')
     def pair_neighbor_step2(self, cookie, pin, name, password):
         """Complete a pairing process.
 
@@ -408,43 +399,39 @@ class ControlApiHandler(JsonRpcHandler):
         paired vault in once Bluepass instance will automatically be synced to
         other instances by the Bluepass backend.
 
-        To get notified of new versions that were added, listen for the
+        To get notified of new secrets that were added, listen for the
         ``VersionsAdded`` signal.
         """
         if cookie not in self._pairings:
             raise NotFound('No such key exchange ID')
         kxid, neighbor, addr = self._pairings.pop(cookie)
-        def complete_pair_neighbor_step2(message, protocol, transport):
-            vault = self.model.create_vault(name, password, neighbor['vault'], notify=False)
+        def complete_pair_neighbor_step2(send_notification):
+            template = {'id': neighbor['vault'], 'name': name, 'password': password}
+            vault = self._model.create_vault(template)
             certinfo = {'node': vault['node'], 'name': util.gethostname()}
-            vault = self.model.vaults[vault['id']]  # access "keys"
-            keys = certinfo['keys'] = {}
-            for key in vault['keys']:
-                keys[key] = {'key': vault['keys'][key]['public'],
-                             'keytype': vault['keys'][key]['keytype']}
-            certinfo['restrictions'] = {}
+            certinfo['keys'] = self._model.get_public_keys(vault['id'])
             client = SyncApiClient()
             client.connect(addr)
             try:
                 peercert = client.pair_step2(vault['id'], kxid, pin, certinfo)
-                self.model.add_certificate(vault['id'], peercert)
+                self._model.create_certificate(vault['id'], peercert)
             except Exception as e:
                 self._log.exception('exception in step #2 of pairing')
-                status = False
-                detail = self.create_error(message, e) or {}
-                model.delete_vault(vault)
+                success = False
+                info = errors.get_error_info(e)
+                message = info.message if info else ''
+                self._model.delete_vault(vault['id'])
             else:
-                status = True
-                detail = {}
+                success = True
+                message = 'OK'
                 try:
-                    client.sync(vault['id'], self.model, notify=False)
+                    client.sync(vault['id'], self._model)
                 except SyncApiError:
                     pass
-                self.model.raise_event('VaultAdded', vault)
-            protocol.send_notification(transport, 'PairNeighborStep2Completed',
-                                       cookie, status, detail)
+                self._model.raise_event('VaultAdded', vault)
+            send_notification('PairNeighborStep2Completed', cookie, success, message)
             client.close()
-        gruvi.spawn(complete_pair_neighbor_step2, self.message, self.protocol, self.transport)
+        gruvi.spawn(complete_pair_neighbor_step2, self.protocol.send_notification)
 
 
 class ControlApiServer(JsonRpcServer):
@@ -452,42 +439,12 @@ class ControlApiServer(JsonRpcServer):
     def __init__(self, **kwargs):
         handler = ControlApiHandler(**kwargs)
         super(ControlApiServer, self).__init__(handler)
-        handler.model.add_callback(self._forward_events)
-        handler.locator.add_callback(self._forward_events)
-        handler.publisher.add_callback(self._forward_events)
-        self._tracefile = None
+        handler._model.add_callback(self._forward_events)
+        handler._locator.add_callback(self._forward_events)
+        handler._publisher.add_callback(self._forward_events)
 
     def _forward_events(self, event, *args):
         # Forward an event as a notification over the message bus
-        for client in self.clients:
+        for _, protocol in self.connections:
             message = jsonrpc.create_notification(event, args)
-            self.send_message(client, message)
-
-    def set_tracefile(self, tracefile):
-        self._tracefile = tracefile
-
-    @switchpoint
-    def upcall(self, method, *args):
-        for client in self.clients:
-            if not client._ctrlapi_authenticated:
-                continue
-            # XXX: in parallel to all clients. Add timeout
-            return self.call_method(client, method, *args)
-
-    def _log_request(self, message):
-        if not self._tracefile:
-            return
-        self._tracefile.write('/* <= incoming {0}, version {1} */\n'.format
-                        (jsonrpc.message_type(message), message.get('jsonrpc', '1.0')))
-        self._tracefile.write(json.dumps_pretty(message))
-        self._tracefile.write('\n\n')
-        self._tracefile.flush()
-
-    def _log_response(self, message):
-        if not self._tracefile:
-            return
-        self._tracefile.write('/* => outgoing {0}, version {1} */\n'.format
-                        (jsonrpc.message_type(message), message.get('jsonrpc', '1.0')))
-        self._tracefile.write(json.dumps_pretty(message))
-        self._tracefile.write('\n\n')
-        self._tracefile.flush()
+            protocol.send_message(message)

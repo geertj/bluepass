@@ -16,7 +16,7 @@ import hmac as hmaclib
 import math
 
 from bluepass import logging, base64
-from bluepass.ext.openssl import *
+from bluepass._openssl import *
 
 __all__ = []
 
@@ -26,7 +26,7 @@ def measure_pbkdf2_speed(prf='hmac-sha1'):
     """Measure the speed of PBKDF2 on this system."""
     salt = password = '0123456789abcdef'
     length = 1; count = 1000
-    log = logging.get_logger('measure_pbkdf2_speed()')
+    log = logging.get_logger()
     log.debug('starting PBKDF2 speed measurement')
     start = time.time()
     while True:
@@ -38,8 +38,8 @@ def measure_pbkdf2_speed(prf='hmac-sha1'):
         count *= 2
     end = time.time()
     speed = int(count / (endrun - startrun))
-    log.debug('PBKDF2 speed is {} iterations / second', speed)
-    log.debug('PBKDF2 speed measurement took {:2f}', (end - start))
+    log.debug('PBKDF2 speed is {:,} iterations/second', speed)
+    log.debug('PBKDF2 speed measurement took {:.2f} secs', (end - start))
     return speed
 
 def pbkdf2_speed(prf='hmac-sha1'):

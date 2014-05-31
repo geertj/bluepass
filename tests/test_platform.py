@@ -16,7 +16,7 @@ import stat
 
 from gruvi.socketpair import socketpair
 
-from tests.support import *
+from support import *
 from bluepass import platform
 
 

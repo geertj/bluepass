@@ -15,7 +15,6 @@ import six
 
 from collections import namedtuple
 from .parsing import *
-from .errors import *
 
 __all__ = ['compile', 'match', 'validate']
 
@@ -41,6 +40,8 @@ def as_int(val, p, e=None):
     return val
 
 def as_float(val, p, e=None):
+    if isinstance(val, int):
+        val = float(val)  # In JSON an int is actually a float
     if not isinstance(val, float):
         return add_error(e, p, 'expecting float, got {0.__name__!r}', type(val))
     return val
@@ -307,6 +308,10 @@ class Result(object):
     def errors(self):
         """Return a list of all errors."""
         return self._errors
+
+
+class ValidationError(Exception):
+    """Validation error."""
 
 
 class Validator(object):
