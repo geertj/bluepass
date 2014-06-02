@@ -1,0 +1,69 @@
+Bluepass contains strong encryption. Because some of its encryption software is
+of US origin (notably TweetNacl, but possibly others), it is in scope for the
+United States Export Administration Regulations (EAR).
+
+To the best of my knowledge, pursuant to section 740.13(e) of the EAR, Bluepass
+is eligible for license exception TSU because it is publically available.
+
+The TSU license exception requires an email notification to BIS and the NSA,
+which I have performed. A copy of this email is included in this file below.
+The copy is a verbatim copy of the mail from my Gmail Sent folder, with the
+only difference that for pricacy reasons I have partially obscured my telephone
+number (my telephone which is present in the actual notification).
+
+There may be other laws to comply with when exporting Bluepass. In all
+circumstances you are required to comply with all applicable law.
+
+
+MIME-Version: 1.0
+Received: by 10.152.109.143 with HTTP; Sat, 31 May 2014 08:31:33 -0700 (PDT)
+Date: Sat, 31 May 2014 17:31:33 +0200
+Delivered-To: geertj@gmail.com
+Message-ID: <CADbA=FXa_Bnws=r-YCw6=cowSKgpJVQkrmP1JmrF=GHL-5i8xQ@mail.gmail.com>
+Subject: TSU NOTIFICATION - Encryption
+From: Geert Jansen <geertj@gmail.com>
+To: crypt@bis.doc.gov, enc@nsa.gov
+Cc: Geert Jansen <geertj@gmail.com>
+Content-Type: multipart/alternative; boundary=f46d042c6b775fcbba04fab3db54
+
+--f46d042c6b775fcbba04fab3db54
+Content-Type: text/plain; charset=UTF-8
+
+SUBMISSION TYPE: TSU
+SUBMITTED BY: Gerardus T. Jansen
+SUBMITTED FOR: Gerardus T. Jansen
+POINT OF CONTACT: Gerardus T. Jansen
+PHONE and/or FAX: +39 095 XX XX XX
+MANUFACTURER: The Bluepass project
+PRODUCT NAME/MODEL #: Bluepass
+ECCN: 5D002
+NOTIFICATION:
+
+This email serves as a notice that I am providing Bluepass, an open source
+password manager containing strong encryption. Bluepass is publicly
+available at the following links:
+
+  http://bluepass.org/
+  http://github.com/geertj/bluepass
+  http://pypi.python.org/pypi/bluepass
+
+--f46d042c6b775fcbba04fab3db54
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<div dir=3D"ltr"><div><div><div><div><div><div><div><div><div><div>SUBMISSI=
+ON TYPE: TSU<br></div>SUBMITTED BY: Gerardus T. Jansen<br></div>SUBMITTED F=
+OR: Gerardus T. Jansen<br></div>POINT OF CONTACT: Gerardus T. Jansen<br></d=
+iv>
+<div>PHONE and/or FAX: +39 095 XX XX XX<br></div><div>MANUFACTURER: The Blu=
+epass project<br></div>PRODUCT NAME/MODEL #: Bluepass<br></div>ECCN: 5D002<=
+br></div>NOTIFICATION:<br><br></div>This email serves as a notice that I am=
+ providing Bluepass, an open source password manager containing strong encr=
+yption. Bluepass is publicly available at the following links:<br>
+<br></div>=C2=A0 <a href=3D"http://bluepass.org/">http://bluepass.org/</a><=
+br></div>=C2=A0 <a href=3D"http://github.com/geertj/bluepass">http://github=
+.com/geertj/bluepass</a><br></div>=C2=A0 <a href=3D"http://pypi.python.org/=
+pypi/bluepass">http://pypi.python.org/pypi/bluepass</a><br>
+</div>
+
+--f46d042c6b775fcbba04fab3db54--
