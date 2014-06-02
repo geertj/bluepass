@@ -13,6 +13,7 @@ import itertools
 from copy import deepcopy
 
 import six
+import pyuv
 import gruvi
 
 from . import base64, json, logging, validate, crypto, util
@@ -44,19 +45,19 @@ va_token = validate.compile("""
 va_vault = validate.compile("""
         { id: uuid, name: str@>0@<=100, node: uuid, keys:
             { sign:
-                { keytype: str="rsa", private: b64@>=16, public: b64@>=16, encinfo:
-                    *{ algo: str="aes-cbc-pkcs7", iv: b64@>=16, kdf:str="pbkdf2-hmac-sha1",
-                       salt: b64@>=16, count: int>0, length: int>0 },
+                { keytype: str="ed25519", private: b64@>=16, public: b64@>=16, encinfo:
+                    *{ algo: str="xsalsa20", nonce: b64@>=16, kdf: str="scrypt",
+                       salt: b64@>=16, N: int>0, r: int>0, p: int>0, l: int>0 },
                   pwcheck:
-                    *{ algo: str="hmac-sha256-random", random: b64@>=16, verifier: b64@>=16 } }
+                    *{ algo: str="poly1305", random: b64@>=16, verifier: b64@>=16 } }
               encrypt:
-                { keytype: str="rsa", private: b64@>=16, public: b64@>=16, encinfo:
-                    *{ algo: str="aes-cbc-pkcs7", iv: b64@>=16, kdf:str="pbkdf2-hmac-sha1",
-                       salt: b64@>=16, count: int>0, length: int>0 },
+                { keytype: str="curve25519", private: b64@>=16, public: b64@>=16, encinfo:
+                    *{ algo: str="xsalsa20", nonce: b64@>=16, kdf: str="scrypt",
+                       salt: b64@>=16, N: int>0, r: int>0, p: int>0, l: int>0 },
                   pwcheck:
-                    *{ algo: str="hmac-sha256-random", random: b64@>=16, verifier: b64@>=16 } }
+                    *{ algo: str="poly1305", random: b64@>=16, verifier: b64@>=16 } }
               auth:
-                { keytype: str="rsa", private: b64@>=16, public: b64@>=16 } } }
+                { keytype: str="ed25519", private: b64@>=16, public: b64@>=16 } } }
         """)
 
 va_vault_tmpl = validate.compile('{id: *uuid, name: str@>0@<=100, password: str@<=100}')
@@ -66,28 +67,28 @@ va_item = validate.compile("""
         { id: uuid, type: str="Item", vault: uuid,
           origin: { node: uuid, seqnr: int>=0 },
           payload: { type: str="Certificate"|="Encrypted", ... }
-          signature: { algo: str="rsa-pss-sha256", blob: b64@>=16 } }
+          signature: { algo: str="ed25519", blob: b64@>=16 } }
         """)
 
 va_cert = validate.compile("""
         { id: uuid, payload:
             {  id: uuid, type:str="Certificate", node: uuid, name: str@>0@<=100, keys:
-                { sign: *{ public: b64, keytype: str="rsa" },
-                  encrypt: *{ public: b64, keytype: str="rsa" },
-                  auth: *{ public: b64, keytype: str="rsa" } } }, ... }
+                { sign: *{ public: b64, keytype: str="ed25519" },
+                  encrypt: *{ public: b64, keytype: str="curve25519" },
+                  auth: *{ public: b64, keytype: str="ed25519" } } }, ... }
         """)
 va_cert_tmpl = validate.compile("""
         { node: uuid, name: str@>0@<=100, keys:
-            { sign: *{ public: b64, keytype: str="rsa" },
-              encrypt: *{ public: b64, keytype: str="rsa" },
-              auth: *{ public: b64, keytype: str="rsa" } } }
+            { sign: *{ public: b64, keytype: str="ed25519" },
+              encrypt: *{ public: b64, keytype: str="curve25519" },
+              auth: *{ public: b64, keytype: str="ed25519" } } }
         """)
 
 
 va_enc = validate.compile("""
         { id: uuid, payload:
-            { type: str="Encrypted", algo: str="aes-cbc-pkcs7", iv: b64@>=16,
-              blob: b64@>=2, keyalgo: str="rsa-oaep", keys: { ... } }, ... }
+            { type: str="Encrypted", algo: str="xsalsa20", nonce: b64@>=16,
+              blob: b64@>=2, keyalgo: str="curve25519", keykey: b64@>=16, keys: { ... } }, ... }
         """)
 # XXX: implement this extra validation
 #va_enc.add('/payload/keys/*', '[uuid, b64@>=16]')
@@ -469,8 +470,15 @@ class Model(object):
                 if not self._verify_item(vault, item):
                     errors += 1
                     continue
+                if not self._decrypt_item(vault, item):
+                    errors += 1
+                    continue
+                # Give the item an new ID and origin so that replication will
+                # pick it up. The secret itself stays the same. Nodes that can
+                # already decrypt it won't pick it up.
+                # XXX: Maybe it is cleaner to create a new version?
                 item['id'] = crypto.random_uuid()
-                self._readdress_item(vault, item)
+                self._encrypt_item(vault, item)
                 self._add_origin(vault, item)
                 self._sign_item(vault, item)
                 self.store.insert('items', item)
@@ -523,11 +531,11 @@ class Model(object):
         assert vault in self._vaults
         assert vault in self._decrypted_keys
         signature = item['signature'] = {}
-        signature['algo'] = 'rsa-pss-sha256'
+        signature['algo'] = 'ed25519'
         message = json.dumps_c14n(item).encode('utf8')
         assert 'sign' in self._decrypted_keys[vault]
         signkey = self._decrypted_keys[vault]['sign']['private']
-        blob = crypto.rsa_sign(message, signkey, 'pss-sha256')
+        blob = crypto.sign(message, signkey)
         signature['blob'] = base64.encode(blob)
 
     def _verify_signature(self, item, pubkey):
@@ -537,18 +545,14 @@ class Model(object):
         was created by a trusted node.
         """
         assert va_item.match(item)
-        if item['signature']['algo'] != 'rsa-pss-sha256':
+        if item['signature']['algo'] != 'ed25519':
             self._log.error('item {!r} unknown sign algo {!r}', abbr(item['id']), algo)
             return False
         blob = item['signature'].pop('blob')
         message = json.dumps_c14n(item).encode('utf8')
         signature = base64.decode(blob)
-        try:
-            status = crypto.rsa_verify(message, signature, pubkey, 'pss-sha256')
-        except crypto.Error:
-            self._log.error('item {!r} garbage in signature', abbr(item['id']))
-            return False
-        if not status:
+        valid = crypto.sign_verify(message, signature, pubkey)
+        if not valid:
             self._log.error('item {!r} has invalid signature', abbr(item['id']))
             return False
         item['signature']['blob'] = blob
@@ -579,48 +583,72 @@ class Model(object):
         """Encrypt the payload of an item."""
         assert vault in self._vaults
         assert vault in self._decrypted_keys
+        # The "payload" field is encrypted with the xsalsa20 stream cipher
+        # using a freshly generated random key.
         clear = item.pop('payload')
         item['payload'] = payload = {}
         payload['type'] = 'Encrypted'
-        payload['algo'] = 'aes-cbc-pkcs7'
-        iv = crypto.random_bytes(16)
-        payload['iv'] = base64.encode(iv)
-        symkey = crypto.random_bytes(16)
+        algo = payload['algo'] = 'xsalsa20'
+        noncebytes = crypto.lookup('stream_NONCEBYTES', algo)
+        nonce = crypto.random_bytes(noncebytes)
+        payload['nonce'] = base64.encode(nonce)
+        keybytes = crypto.lookup('stream_KEYBYTES', algo)
+        symkey = crypto.random_bytes(keybytes)
         message = json.dumps(clear).encode('utf8')
-        blob = crypto.aes_encrypt(message, symkey, iv, 'cbc-pkcs7')
+        blob = crypto.stream_xor(message, nonce, symkey, algo)
         payload['blob'] = base64.encode(blob)
-        payload['keyalgo'] = 'rsa-oaep'
+        # Now encrypt the symmetric key for each node (including ourselves)
+        # that will need to decrypt this item.
+        # For our choice of algorithms, the assertions below should hold.
+        keyalgo = payload['keyalgo'] = 'curve25519'
+        privbytes = crypto.lookup('scalarmult_SCALARBYTES', keyalgo)
+        assert keybytes == privbytes
+        hashalgo = 'sha512'
+        hashbytes = crypto.lookup('hash_BYTES', hashalgo)
+        assert keybytes <= hashbytes
+        # Create a new ECDH public key
+        keypriv = crypto.random_bytes(privbytes)
+        keypub = crypto.scalarmult_base(keypriv, keyalgo)
+        payload['keykey']  = base64.encode(keypub)
+        # For each node, create an ECDH shared secret, hash it, and xor that to
+        # the symmetric key.
         payload['keys'] = keys = {}
-        # encrypt the symmetric key to all nodes in the vault including ourselves
         for node,cert in self._trusted_certs[vault].items():
             key = cert['keys'].get('encrypt')
             if not key:
                 continue
-            pubkey = base64.decode(key['public'])
-            enckey = crypto.rsa_encrypt(symkey, pubkey, 'oaep')
+            nodepub = base64.decode(key['public'])
+            nodeshared = crypto.scalarmult(keypriv, nodepub, keyalgo)
+            nodehashed = crypto.hash(nodeshared, hashalgo)[:keybytes]
+            enckey = crypto.xor(nodehashed, symkey)
             keys[node] = base64.encode(enckey)
 
     def _decrypt_item(self, vault, item):
         """Decrypt an encrypted payload."""
         assert vault in self._vaults
         assert vault in self._decrypted_keys
-        assert item['payload']['algo'] == 'aes-cbc-pkcs7'
-        assert item['payload']['keyalgo'] == 'rsa-oaep'
+        payload = item['payload']
+        algo = 'xsalsa20'
+        assert payload['algo'] == algo
+        keyalgo = 'curve25519'
+        assert payload['keyalgo'] == keyalgo
         node = self._vaults[vault]['node']
-        keys = item['payload']['keys']
-        if node not in keys:
+        if node not in payload['keys']:
             self._log.warning('item {!r} not encrypted to us', abbr(item['id']))
             return False
-        try:
-            enckey = base64.decode(keys[node])
-            privkey = self._decrypted_keys[vault]['encrypt']['private']
-            symkey = crypto.rsa_decrypt(enckey, privkey, 'oaep')
-            blob = base64.decode(item['payload']['blob'])
-            iv = base64.decode(item['payload']['iv'])
-            clear = crypto.aes_decrypt(blob, symkey, iv, 'cbc-pkcs7')
-        except crypto.Error as e:
-            self._log.error('item {!r} decryption failed: {!s}', abbr(item['id']), e)
-            return False
+        # Recover our encryption key.
+        enckey = base64.decode(payload['keys'][node])
+        keykey = base64.decode(payload['keykey'])
+        privkey = self._decrypted_keys[vault]['encrypt']['private']
+        shared = crypto.scalarmult(privkey, keykey, keyalgo)
+        hashalgo = 'sha512'
+        keylen = crypto.lookup('stream_KEYBYTES', algo)
+        hashed = crypto.hash(shared, hashalgo)[:keylen]
+        symkey = crypto.xor(hashed, enckey)
+        # With the decryption key we can now open the payload blob
+        blob = base64.decode(item['payload']['blob'])
+        nonce = base64.decode(item['payload']['nonce'])
+        clear = crypto.stream_xor(blob, nonce, symkey)
         payload = json.try_loads(clear.decode('utf8'), dict)
         if payload is None:
             self._log.error('item {!r} illegal JSON in payload', item['id'])
@@ -628,83 +656,65 @@ class Model(object):
         item['payload'] = payload
         return True
 
-    def _readdress_item(self, vault, item):
-        """Readdress an existing item.
-        
-        This re-encypts the symmetric key of the payload to all trusted certs.
-        """
-        assert vault in self._vaults
-        assert vault in self._decrypted_keys
-        assert item['payload']['algo'] == 'aes-cbc-pkcs7'
-        assert item['payload']['keyalgo'] == 'rsa-oaep'
-        node = self._vaults[vault]['node']
-        keys = item['payload']['keys']
-        if node not in keys:
-            self._log.warning('item {!r} not encrypted to us', abbr(item['id']))
-            return False
-        try:
-            enckey = base64.decode(keys[node])
-            privkey = self._decrypted_keys[vault]['encrypt']['private']
-            symkey = crypto.rsa_decrypt(enckey, privkey, 'oaep')
-        except crypto.Error as e:
-            self._log.error('item {!r} decryption failed: {!s}', abbr(item['id']), e)
-            return False
-        keys = item['payload']['keys'] = {}
-        # encrypt the symmetric key to all nodes in the vault including ourselves
-        for node,cert in self._trusted_certs[vault].items():
-            key = cert['keys'].get('encrypt')
-            if not key:
-                continue
-            pubkey = base64.decode(key['public'])
-            enckey = crypto.rsa_encrypt(symkey, pubkey, 'oaep')
-            keys[node] = base64.encode(enckey)
-        return True
-
     # Vault keys
 
     def _create_vault_keys(self):
-        """Create *count* vault keys. Key generation is done in a thread pool."""
-        pool = gruvi.get_cpu_pool()
-        dummy = crypto.pbkdf2_speed('hmac-sha1')
-        keynames = ('sign', 'encrypt', 'auth')
-        def create_key():
-            key = {'keytype': 'rsa'}
-            key['private'], key['public'] = crypto.rsa_genkey(2048)
-            return key
-        futs = [pool.submit(create_key) for kn in keynames]
-        return dict(((kn, futs.pop().result()) for kn in keynames))
+        """Create the keys for a vault."""
+        keys = {}
+        # The encrypt key is curve25519
+        algo = 'curve25519'
+        key = keys['encrypt'] = {}
+        key['keytype'] = algo
+        keybytes = crypto.lookup('scalarmult_SCALARBYTES', algo)
+        key['private'] = privkey = crypto.random_bytes(keybytes)
+        key['public'] = crypto.scalarmult_base(privkey, algo)
+        # The sign key is ed25519
+        algo = 'ed25519'
+        key = keys['sign'] = {}
+        key['keytype'] = algo
+        key['public'], key['private'] = crypto.sign_keypair(algo)
+        # The auth key is ed25519 as well
+        algo = 'ed25519'
+        key = keys['auth'] = {}
+        key['keytype'] = algo
+        key['public'], key['private'] = crypto.sign_keypair(algo)
+        return keys
  
     def _encrypt_vault_key(self, key, password):
         """Encrypt and encode a vault key."""
         enc = {}
         enc['keytype'] = key['keytype']
+        # The public key is stored as-is.
         enc['public'] = base64.encode(key['public'])
         if not password:
             enc['private'] = base64.encode(key['private'])
             return enc
+        # Encrypt the private key.
         password = password.encode('utf8')
         encinfo = enc['encinfo'] = {}
-        # Generate a key from password using a KDF.
-        encinfo['kdf'] = 'pbkdf2-hmac-sha1'
-        encinfo['count'] = max(4096, int(0.2 * crypto.pbkdf2_speed('hmac-sha1')))
-        encinfo['length'] = 16
+        algo = encinfo['algo'] = 'xsalsa20'
+        noncebytes = crypto.lookup('stream_NONCEBYTES', algo)
+        nonce = crypto.random_bytes(noncebytes)
+        encinfo['nonce'] = base64.encode(nonce)
+        # Generate a key from the password and salt using scrypt.
+        encinfo['kdf'] = 'scrypt'
         salt = crypto.random_bytes(16)
         encinfo['salt'] = base64.encode(salt)
-        symkey = crypto.pbkdf2(password, salt, encinfo['count'], encinfo['length'], 'hmac-sha1')
-        # Encrypt using the generated key and store in the copy.
-        encinfo['algo'] = 'aes-cbc-pkcs7'
-        iv = crypto.random_bytes(16)
-        encinfo['iv'] = base64.encode(iv)
-        enckey = crypto.aes_encrypt(key['private'], symkey, iv, 'cbc-pkcs7')
+        N, r, p = crypto.scrypt_params()
+        encinfo['N'], encinfo['r'], encinfo['p'] = N, r, p
+        keybytes = crypto.lookup('stream_KEYBYTES', algo)
+        encinfo['l'] = keybytes
+        symkey = crypto.scrypt(password, salt, N, r, p, keybytes)
+        enckey = crypto.stream_xor(key['private'], nonce, symkey)
         enc['private'] = base64.encode(enckey)
         # Store a password verifier as well. It is important that the verifier
         # verifies the *generated* key not the password! This conserves the work
         # factor of the KDF.
         pwcheck = enc['pwcheck'] = {}
-        pwcheck['algo'] = 'hmac-sha256-random'
+        algo = pwcheck['algo'] = 'poly1305'
         random = crypto.random_bytes(16)
         pwcheck['random'] = base64.encode(random)
-        verifier = crypto.hmac(symkey, random, 'sha256')
+        verifier = crypto.onetimeauth(random, symkey)
         pwcheck['verifier'] = base64.encode(verifier)
         return enc
 
@@ -718,23 +728,26 @@ class Model(object):
         if encinfo is None:
             dec['private'] = base64.decode(key['private'])
             return dec
+        # Create the symmetric key from the password using the KDF.
         password = password.encode('utf8')
-        iv = base64.decode(encinfo['iv'])
         salt = base64.decode(encinfo['salt'])
-        assert encinfo['kdf'] == 'pbkdf2-hmac-sha1'
-        symkey = crypto.pbkdf2(password, salt, encinfo['count'], encinfo['length'], 'hmac-sha1')
+        assert encinfo['kdf'] == 'scrypt'
+        N, r, p, l = encinfo['N'], encinfo['r'], encinfo['p'], encinfo['l']
+        symkey = crypto.scrypt(password, salt, N, r, p, l)
         # Check that the derived key is correct
         pwcheck = key['pwcheck']
-        assert pwcheck['algo'] == 'hmac-sha256-random'
+        pwcalgo = pwcheck['algo']
+        assert pwcalgo == 'poly1305'
         random = base64.decode(pwcheck['random'])
         verifier = base64.decode(pwcheck['verifier'])
-        check = crypto.hmac(symkey, random, 'sha256')
-        if check != verifier:
+        if not crypto.onetimeauth_verify(verifier, random, symkey, pwcalgo):
             raise InvalidPassword('Invalid vault password')
         # Decrypt the private key and store in the copy.
-        assert encinfo['algo'] == 'aes-cbc-pkcs7'
+        algo = encinfo['algo']
+        assert algo == 'xsalsa20'
         privkey = base64.decode(key['private'])
-        dec['private']= crypto.aes_decrypt(privkey, symkey, iv, 'cbc-pkcs7')
+        nonce = base64.decode(encinfo['nonce'])
+        dec['private'] = crypto.stream_xor(privkey, nonce, symkey, algo)
         return dec
 
     # Events / callbacks

@@ -130,10 +130,10 @@ def main():
     update_version()
     update_manifest()
     sys.path.append('bluepass')
-    import platform_ffi
-    ext_modules = [platform_ffi.ffi.verifier.get_extension()]
-    ext_modules.append(Extension('_openssl', ['bluepass/_openssl.c'],
-                                 libraries=['ssl', 'crypto']))
+    import nacl_ffi, scrypt_ffi, platform_ffi
+    ext_modules = [nacl_ffi.ffi.verifier.get_extension(),
+                   scrypt_ffi.ffi.verifier.get_extension(),
+                   platform_ffi.ffi.verifier.get_extension()]
     sys.path.pop()
     setup(
         packages = ['bluepass', 'bluepass.platform', 'bluepass.frontends',

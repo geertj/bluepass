@@ -7,47 +7,13 @@
 # licensing terms.
 
 import os
-import time
 import random
-import hashlib
 import uuid
 import string
-import hmac as hmaclib
 import math
 
-from bluepass import logging, base64
-from bluepass._openssl import *
-
-__all__ = []
-
-_pbkdf2_speed = {}
-
-def measure_pbkdf2_speed(prf='hmac-sha1'):
-    """Measure the speed of PBKDF2 on this system."""
-    salt = password = '0123456789abcdef'
-    length = 1; count = 1000
-    log = logging.get_logger()
-    log.debug('starting PBKDF2 speed measurement')
-    start = time.time()
-    while True:
-        startrun = time.time()
-        pbkdf2(password, salt, count, length, prf)
-        endrun = time.time()
-        if endrun - startrun > 0.2:
-            break
-        count *= 2
-    end = time.time()
-    speed = int(count / (endrun - startrun))
-    log.debug('PBKDF2 speed is {:,} iterations/second', speed)
-    log.debug('PBKDF2 speed measurement took {:.2f} secs', (end - start))
-    return speed
-
-def pbkdf2_speed(prf='hmac-sha1'):
-    """Return the speed in rounds/second for generating a key
-    with PBKDF2 of up to the hash length size of `prf`."""
-    if prf not in _pbkdf2_speed:
-        _pbkdf2_speed[prf] = measure_pbkdf2_speed(prf)
-    return _pbkdf2_speed[prf]
+from bluepass.nacl import *
+from bluepass.scrypt import *
 
 
 def random_bytes(count):
@@ -74,6 +40,9 @@ def random_element(elements):
     """Return a random element from *elements*."""
     return random.choice(elements)
 
+
+import hashlib
+import hmac as hmaclib
 
 def _get_hash(name):
     if not hasattr(hashlib, name):

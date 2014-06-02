@@ -402,10 +402,10 @@ class TestModel(UnitTest):
             self.assertIsInstance(keys[keyname]['public'], six.string_types)
         template = {'node': crypto.random_uuid(), 'name': 'foo', }
         keys = template['keys'] = {}
-        for keyname in ('auth', 'encrypt', 'sign'):
-            key = keys[keyname] = {}
-            key['keytype'] = 'rsa'
-            key['public'] = base64.encode(crypto.random_bytes(64))
+        random = base64.encode(crypto.random_bytes(64))
+        keys['sign'] = {'keytype': 'ed25519', 'public': random}
+        keys['encrypt'] = {'keytype': 'curve25519', 'public': random}
+        keys['auth'] = {'keytype': 'ed25519', 'public': random}
         cert = model.create_certificate(vault['id'], template)
         self.assertIsInstance(cert, dict)
         self.assertIn('id', cert)

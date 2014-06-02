@@ -180,8 +180,6 @@ class SyncApiClient(object):
         """Return the headers for a client to server HMAC_CB auth."""
         sslinfo = self.client.connection[0].get_extra_info('sslinfo')
         cb = sslinfo.get_channel_binding('tls-unique')
-        print("CB (CLIENT)", repr(cb))
-        print("PIN (CLIENT)", pin)
         signature = crypto.hmac(adjust_pin(pin, +1).encode('ascii'), cb, 'sha1')
         signature = base64.encode(signature)
         auth = create_option_header('HMAC_CB', kxid=kxid, signature=signature)
@@ -261,21 +259,21 @@ class SyncApiClient(object):
             raise SyncApiError('Illegal syncapi response')
         return peercert
 
-    def _get_rsa_cb_auth(self, uuid, model):
-        """Return the headers for RSA_CB authentication."""
+    def _get_ed25519_cb_auth(self, uuid, model):
+        """Return the headers for ED25519_CB authentication."""
         sslinfo = self.client.connection[0].get_extra_info('sslinfo')
         cb = sslinfo.get_channel_binding('tls-unique')
         privkey = model.get_auth_key(uuid)
         assert privkey is not None
-        signature = crypto.rsa_sign(cb, privkey, 'pss-sha1')
+        signature = crypto.sign(cb, privkey, 'ed25519')
         signature = base64.encode(signature)
         vault = model.get_vault(uuid)
-        auth = create_option_header('RSA_CB', node=vault['node'], signature=signature)
+        auth = create_option_header('ED25519_CB', node=vault['node'], signature=signature)
         headers = [('Authorization', auth)]
         return headers
 
-    def _check_rsa_cb_auth(self, uuid, response, model):
-        """Verify RSA_CB authentication."""
+    def _check_ed25519_cb_auth(self, uuid, response, model):
+        """Verify ED25519_CB authentication."""
         authinfo = response.get_header('Authentication-Info', '')
         try:
             method, options = parse_option_header(authinfo)
@@ -292,16 +290,13 @@ class SyncApiClient(object):
         signature = base64.decode(options['signature'])
         cert = model.get_certificate(uuid, options['node'])
         if cert is None:
-            self._log.error('unknown node {} in RSA_CB authentication', node)
+            self._log.error('unknown node {} in ED25519_CB authentication', node)
             return False
         pubkey = base64.decode(cert['keys']['auth']['public'])
-        try:
-            status = crypto.rsa_verify(cb, signature, pubkey, 'pss-sha1')
-        except crypto.Error:
-            self._log.error('corrupt RSA_CB signature')
-            return False
+        status = crypto.sign_verify(cb, signature, pubkey, 'ed25519')
         if not status:
-            self._log.error('RSA_CB signature did not match')
+            self._log.error('ED25519_CB signature did not match')
+            return False
         return status
 
     def sync(self, uuid, model):
@@ -315,7 +310,7 @@ class SyncApiClient(object):
         vector = dump_vector(vector)
         url = '/api/vaults/%s/items?vector=%s' % (vault['id'], vector)
         gruvi.sleep(0.1)  # XXX: wait for ssl handshake
-        headers = self._get_rsa_cb_auth(uuid, model)
+        headers = self._get_ed25519_cb_auth(uuid, model)
         response = self._make_request('GET', url, headers)
         if not response:
             raise SyncApiError('Could not make HTTP request')
@@ -323,7 +318,7 @@ class SyncApiClient(object):
         if status != 200:
             self._log.error('expecting HTTP status 200 (got: {})', status)
             raise SyncApiError('Illegal syncapi response')
-        if not self._check_rsa_cb_auth(uuid, response, model):
+        if not self._check_ed25519_cb_auth(uuid, response, model):
             raise SyncApiError('Illegal syncapi response')
         initems = response.entity
         if initems is None or not isinstance(initems, list):
@@ -344,7 +339,7 @@ class SyncApiClient(object):
         if status != 200:
             self._log.error('expecting HTTP status 200 (got: {})', status)
             raise SyncApiError('Illegal syncapi response')
-        if not self._check_rsa_cb_auth(uuid, response, model):
+        if not self._check_ed25519_cb_auth(uuid, response, model):
             raise SyncApiError('Illegal syncapi response')
         self._log.debug('succesfully retrieved {} items from peer', len(initems))
         self._log.debug('succesfully pushed {} items to peer', len(outitems))
@@ -529,8 +524,6 @@ class SyncApiApplication(WSGIApplication):
             if now - starttime > 60:
                 raise HTTPReturn('403 Request Timeout')
             cb = self._get_tls_unique_cb()
-            print("CB", repr(cb))
-            print("PIN", pin)
             check = crypto.hmac(adjust_pin(pin, +1).encode('ascii'), cb, 'sha1')
             if check != signature:
                 raise HTTPReturn('403 Invalid PIN')
@@ -546,9 +539,9 @@ class SyncApiApplication(WSGIApplication):
         else:
             raise HTTPReturn(http.UNAUTHORIZED, headers)
  
-    def _do_auth_rsa_cb(self, uuid):
-        """Perform mutual RSA_CB authentication."""
-        wwwauth = create_option_header('RSA_CB', realm=uuid)
+    def _do_auth_ed25519_cb(self, uuid):
+        """Perform mutual ED25519_CB authentication."""
+        wwwauth = create_option_header('ED25519_CB', realm=uuid)
         headers = [('WWW-Authenticate', wwwauth)]
         auth = self.environ.get('HTTP_AUTHORIZATION')
         if auth  is None:
@@ -557,7 +550,7 @@ class SyncApiApplication(WSGIApplication):
             method, opts = parse_option_header(auth)
         except ValueError:
             raise HTTPReturn(http.UNAUTHORIZED, headers)
-        if method != 'RSA_CB':
+        if method != 'ED25519_CB':
             raise HTTPReturn(http.UNAUTHORIZED, headers)
         if 'node' not in opts or not uuid4.check(opts['node']):
             raise HTTPReturn(http.UNAUTHORIZED, headers)
@@ -570,15 +563,15 @@ class SyncApiApplication(WSGIApplication):
         signature = base64.decode(opts['signature'])
         pubkey = base64.decode(cert['keys']['auth']['public'])
         cb = self._get_tls_unique_cb()
-        if not crypto.rsa_verify(cb, signature, pubkey, 'pss-sha1'):
+        if not crypto.sign_verify(cb, signature, pubkey, 'ed25519'):
             raise HTTPReturn(http.UNAUTHORIZED, headers)
         # The peer was authenticated. Authenticate ourselves as well.
         privkey = model.get_auth_key(uuid)
         vault = model.get_vault(uuid)
         node = vault['node']
-        signature = crypto.rsa_sign(cb, privkey, 'pss-sha1')
+        signature = crypto.sign(cb, privkey, 'ed25519')
         signature = base64.encode(signature)
-        auth = create_option_header('RSA_CB', node=node, signature=signature)
+        auth = create_option_header('ED25519_CB', node=node, signature=signature)
         self.headers.append(('Authentication-Info', auth))
 
     @expose('/api/vaults/:vault/pair', method='POST')
@@ -610,7 +603,7 @@ class SyncApiApplication(WSGIApplication):
         vault = model.get_vault(uuid)
         if vault is None:
             raise HTTPReturn(http.NOT_FOUND)
-        self._do_auth_rsa_cb(uuid)
+        self._do_auth_ed25519_cb(uuid)
         args = parse_qs(env.get('QUERY_STRING', ''))
         vector = args.get('vector', [''])[0]
         if vector:
@@ -632,7 +625,7 @@ class SyncApiApplication(WSGIApplication):
         vault = model.get_vault(uuid)
         if vault is None:
             raise HTTPReturn(http.NOT_FOUND)
-        self._do_auth_rsa_cb(uuid)
+        self._do_auth_ed25519_cb(uuid)
         items = self.entity
         if items is None or not isinstance(items, list):
             raise HTTPReturn(http.BAD_REQUEST)
