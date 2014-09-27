@@ -13,8 +13,8 @@ import stat
 import errno
 import socket
 import hashlib
+import six
 
-from gruvi import compat
 import gruvi.util
 
 
@@ -62,11 +62,11 @@ def gethostname():
 
 def paddr(s):
     """Parse a string form of a socket address."""
-    return gruvi.util.paddr(s)
+    return gruvi.paddr(s)
 
 def saddr(address):
     """Convert a socket address into a string form."""
-    return gruvi.util.saddr(address)
+    return gruvi.saddr(address)
 
 def create_connection(address, timeout=None):
     """Create a connection to *address* and return the socket."""
@@ -74,7 +74,7 @@ def create_connection(address, timeout=None):
         sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM, 0)
     elif isinstance(address, tuple) and '.' in address[0]:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
-    elif isinstance(address, compat.string_types):
+    elif isinstance(address, six.string_types):
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM, 0)
     else:
         raise ValueError('expecting IPv4/IPv6 tuple, or path')

@@ -50,7 +50,7 @@ class Store(object):
 
     The store exposes zero or more collections, where each collection is a
     named set of documents. At the SQL level, a collection is a table with the
-    same name as the collection. The table contains a column named _doc_ that
+    same name as the collection. The table contains a column named doc that
     contains the JSON document as a string.
 
     Collections can have an indices on values in the documents that are
@@ -166,11 +166,12 @@ class Store(object):
     def create_collection(self, name):
         """Create a new collection *name*."""
         with self.begin() as cursor:
-            cursor.execute("CREATE TABLE {0} (_doc_ TEXT)".format(name))
+            cursor.execute("CREATE TABLE {0} (doc TEXT)".format(name))
         self.collections.append(name)
         self.indices[name] = []
 
-    _re_path = re.compile('(?<!_)(\$[a-zA-Z_][a-zA-Z0-9_]*)+')
+    #_re_path = re.compile('(?<!_)(\$[a-zA-Z_][a-zA-Z0-9_]*)+')
+    _re_path = re.compile('((\$[a-zA-Z_][a-zA-Z0-9_]*)+)')
 
     def create_index(self, collection, path, valuetype='TEXT', modifier=''):
         """Create a new index on a collection.
@@ -184,11 +185,11 @@ class Store(object):
         if not self._re_path.match(path):
             raise ValueError('illegal path: {0!r}'.format(path))
         with self.begin() as cursor:
-            cursor.execute("ALTER TABLE {0} ADD COLUMN _{1}_ {2}"
+            cursor.execute("ALTER TABLE {0} ADD COLUMN _{1} {2}"
                             .format(collection, path, valuetype))
-            cursor.execute("CREATE {0} INDEX _{1}_{2} ON {1}(_{2}_)"
+            cursor.execute("CREATE {0} INDEX _{1}_{2} ON {1}(_{2})"
                             .format(modifier, collection, path))
-            cursor.execute("UPDATE {0} SET _{1}_ = get_json_value(_doc_, '{1}')"
+            cursor.execute("UPDATE {0} SET _{1} = get_json_value(doc, '{1}')"
                             .format(collection, path))
         self.indices[collection].append(path)
 
@@ -201,7 +202,7 @@ class Store(object):
         indices = self.indices[collection]
         def replace(match):
             path = match.group(0)
-            tmpl = '_{0}_' if path in indices else "get_json_value(_doc_, '{0}')"
+            tmpl = '_{0}' if path in indices else "get_json_value(doc, '{0}')"
             return tmpl.format(path)
         return self._re_path.sub(replace, query)
 
@@ -211,7 +212,9 @@ class Store(object):
         Note: $path expansion is performed on the query, but it is always
         assumed that the path is indexed.
         """
-        query = self._re_path.sub('_\\1_', query)
+        print('query before', repr(query))
+        query = self._re_path.sub('_\\1', query)
+        print('query after', repr(query))
         with self.begin() as cursor:
             cursor.execute(query, args)
             result = cursor.fetchall()
@@ -235,7 +238,7 @@ class Store(object):
 
         The return value is a list of parsed JSON documents.
         """
-        query = "SELECT _doc_ FROM {0}".format(collection)
+        query = "SELECT doc FROM {0}".format(collection)
         if where is not None:
             query += " WHERE {0}".format(where)
         if sort is not None:
@@ -259,11 +262,11 @@ class Store(object):
         """
         doc = json.dumps(document)
         with self.begin() as cursor:
-            cursor.execute("INSERT INTO {0} (_doc_) VALUES (?)".format(collection), (doc,))
+            cursor.execute("INSERT INTO {0} (doc) VALUES (?)".format(collection), (doc,))
             indices = self.indices[collection]
             if not indices:
                 return
-            assign = ["_{0}_ = get_json_value(_doc_, '{0}')".format(ix) for ix in indices]
+            assign = ["_{0} = get_json_value(doc, '{0}')".format(ix) for ix in indices]
             query = "UPDATE {0} SET {1} WHERE _rowid_ = ?".format(collection, ', '.join(assign))
             cursor.execute(query, (cursor.lastrowid,))
 

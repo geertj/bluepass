@@ -60,7 +60,7 @@ class QJsonRpcClient(QObject):
         self._outbuf = b''
         self._incoming = collections.deque()
         self._outgoing = collections.deque()
-        self._parser = jsonrpc.JsonRpcParser()
+        self._parser = jsonrpc.JsonRpcProtocol(True)
         self._read_notifier = None
         self._write_notifier = None
         self._log = logging.get_logger(self)
@@ -97,15 +97,13 @@ class QJsonRpcClient(QObject):
                 self._log.error('peer closed connection')
                 self.close()
                 break
-            nbytes = self._parser.feed(buf)
-            if nbytes != len(buf):
-                self._log.error('parse error {0}'.format(self._parser.error))
+            self._parser.data_received(buf)
+            if self._parser._error:
+                self._log.error('parse error {0}'.format(self._parser._error))
                 self.close()
                 break
-            while True:
-                message = self._parser.pop_message()
-                if not message:
-                    break
+            while self._parser.queue.qsize():
+                message = self._parser.queue.get()
                 self._incoming.append(message)
         # Schedule a dispatch if there are incoming messages
         if self._incoming:
@@ -187,7 +185,7 @@ class QJsonRpcClient(QObject):
 
     def call_method(self, method, *args, **kwargs):
         """Call a method."""
-        if self._method_calls:
+        if len(self._method_calls) > 5:
             raise RuntimeError('recursive call_method() detected')
         message = jsonrpc.create_request(method, args)
         self.send_message(message)

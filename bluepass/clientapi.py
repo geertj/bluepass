@@ -173,5 +173,5 @@ class ClientApiServer(HttpServer):
                 continue
             else:
                 break
-        if self.transport is None:
+        if not self.addresses:
             raise ClientApiError('could not bind to port {0}..{1}'.format(low, high))

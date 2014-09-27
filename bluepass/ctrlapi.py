@@ -43,7 +43,7 @@ class ControlApiHandler(JsonRpcHandler):
         super(ControlApiHandler, self).__init__()
         self._model = model or instance(Model)
         self._locator = locator or instance(Locator)
-        self._publisher = publisher or instance(SyncApiPublisher)
+        #self._publisher = publisher or instance(SyncApiPublisher)
         from bluepass.backend import Backend
         self._backend = backend or instance(Backend)
         self._pairings = {}
@@ -80,8 +80,9 @@ class ControlApiHandler(JsonRpcHandler):
         if last_match is None:
             self._log.exception('uncaught exception in method handler')
             return jsonrpc.create_error(message, jsonrpc.SERVER_ERROR)
-        message = exc.args[0] if exc.args else exc.__doc__
-        return jsonrpc.create_error(last_match[1], message)
+        strerror = exc.args[0] if exc.args else exc.__doc__
+        return jsonrpc.create_error(message, code=jsonrpc.SERVER_ERROR,
+                                    message=strerror)
 
     # General
 
@@ -454,14 +455,14 @@ class ControlApiServer(JsonRpcServer):
         super(ControlApiServer, self).__init__(handler)
         handler.model.add_callback(self._forward_events)
         handler.locator.add_callback(self._forward_events)
-        handler.publisher.add_callback(self._forward_events)
+        #handler.publisher.add_callback(self._forward_events)
         self._tracefile = None
 
     def _forward_events(self, event, *args):
         # Forward an event as a notification over the message bus
-        for client in self.clients:
+        for _, protocol in self.connections:
             message = jsonrpc.create_notification(event, args)
-            self.send_message(client, message)
+            protocol.send_message(message)
 
     def set_tracefile(self, tracefile):
         self._tracefile = tracefile

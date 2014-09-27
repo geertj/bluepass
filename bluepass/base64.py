@@ -10,7 +10,7 @@ from __future__ import absolute_import, print_function
 
 import base64
 import binascii
-from gruvi import compat
+import six
 
 Error = binascii.Error
 
@@ -27,13 +27,13 @@ Error = binascii.Error
 
 def encode(b):
     """Encode a string into base-64 encoding."""
-    if not isinstance(b, compat.binary_type):
+    if not isinstance(b, six.binary_type):
         raise TypeError('expecting bytes')
     return base64.b64encode(b).decode('ascii')
 
 def decode(s):
     """Decode a base-64 encoded string."""
-    if not isinstance(s, compat.string_types):
+    if not isinstance(s, six.string_types):
         raise TypeError('expecting string')
     try:
         return base64.b64decode(s)
@@ -42,7 +42,7 @@ def decode(s):
 
 def check(s):
     """Check that `s' is a properly encoded base64 string."""
-    if not isinstance(s, compat.string_types):
+    if not isinstance(s, six.string_types):
         raise TypeError('expecting string')
     try:
         base64.b64decode(s)

@@ -10,9 +10,9 @@ from __future__ import absolute_import, print_function
 
 import time
 import itertools
+import six
 
 import gruvi
-from gruvi import compat
 
 from . import base64, json, logging, validate, crypto, util
 from .errors import *
@@ -40,7 +40,7 @@ va_token = validate.compile("""
         """)
 
 va_vault = validate.compile("""
-        { id: uuid, name: str@>0@<=100, node: uuid, keys:
+        { id: uuid, _type: str="Vault", name: str@>0@<=100, node: uuid, keys:
             { sign:
                 { keytype: str="rsa", private: b64@>=16, public: b64@>=16, encinfo:
                     { algo: str="aes-cbc-pkcs7", iv: b64@>=16, kdf:str="pbkdf2-hmac-sha1",
@@ -61,15 +61,15 @@ va_vault = validate.compile("""
 va_vault_update = validate.compile('{name: str@>0@<=100}')
 
 va_item = validate.compile("""
-        { id: uuid, type: str="Item", vault: uuid,
+        { id: uuid, _type: str="Item", vault: uuid,
           origin: { node: uuid, seqnr: int>=0 },
-          payload: { type: str="Certificate"|="EncryptedItem", ... }
+          payload: { _type: str="Certificate"|="EncryptedItem", ... }
           signature: { algo: str="rsa-pss-sha256", blob: b64@>=16 } }
         """)
 
 va_cert = validate.compile("""
         { id: uuid, payload:
-            {  id: uuid, type:str="Certificate", node: uuid, name: str@>0@<=100, keys:
+            {  id: uuid, _type:str="Certificate", node: uuid, name: str@>0@<=100, keys:
                 { sign: { key: b64, keytype: str="rsa" },
                   encrypt: { key: b64, keytype: str="rsa" },
                   auth: { key: b64, keytype: str="rsa" } }
@@ -78,19 +78,19 @@ va_cert = validate.compile("""
 
 va_encitem = validate.compile("""
         { id: uuid, payload:
-            { type: str="EncryptedItem", algo: str="aes-cbc-pkcs7",
+            { _type: str="EncryptedItem", algo: str="aes-cbc-pkcs7",
               iv: b64@>=16 blob: b64@>=2, keyalgo: str="rsa-oaep", keys: {...} }, ... }
         """)
 
 # XXX: Check encitems/payload/keys: uuid -> b64
 
 va_decitem = validate.compile("""
-        { id: uuid, payload: { id: uuid, type: str="Version", ... }, ... }
+        { id: uuid, payload: { id: uuid, _type: str="Version", ... }, ... }
         """)
 
 va_version = validate.compile("""
         { id: uuid, payload:
-            { id: uuid, type: str="Version", parent: *uuid, deleted: *bool,
+            { id: uuid, _type: str="Version", parent: *uuid, deleted: *bool,
               created_at: int>=0, version: { id: uuid, ... } }, ... }
         """)
 
@@ -159,7 +159,7 @@ class Model(object):
             store.create_index('items', '$vault', 'TEXT')
             store.create_index('items', '$origin$node', 'TEXT')
             store.create_index('items', '$origin$seqnr', 'INT')
-            store.create_index('items', '$payload$type', 'TEXT')
+            store.create_index('items', '$payload$_type', 'TEXT')
 
     def _load_tokens(self):
         """Load all tokens."""
@@ -187,7 +187,7 @@ class Model(object):
                 self._log.error('Invalid item "{}": {}', uuid, vres.errors[0])
                 errors += 1
                 continue
-            typ = item['payload']['type']
+            typ = item['payload']['_type']
             if typ == 'Certificate':
                 vres = va_cert.validate(item)
                 if not vres:
@@ -223,7 +223,7 @@ class Model(object):
         self._version_cache[uuid] = {}
         self._linear_history[uuid] = {}
         self._full_history[uuid] = {}
-        seqnr = self.store.execute('items', """
+        seqnr = self.store.execute("""
                 SELECT MAX($origin$seqnr)
                 FROM items
                 WHERE $origin$node = ? AND $vault = ?
@@ -300,7 +300,7 @@ class Model(object):
         assert vault in self.vaults
         # Create mapping of certificates by their signer
         certs = {}
-        query = "$vault = ? AND $payload$type = 'Certificate'"
+        query = "$vault = ? AND $payload$_type = 'Certificate'"
         result = self.store.findall('items', query, (vault,))
         for cert in result:
             assert va_item.match(cert)
@@ -420,7 +420,7 @@ class Model(object):
     def _load_versions(self, vault):
         """Load all current versions and their history."""
         versions = []
-        query = "$vault = ? AND $payload$type = 'EncryptedItem'"
+        query = "$vault = ? AND $payload$_type = 'EncryptedItem'"
         items = self.store.findall('items', query, (vault,))
         for item in items:
             if not self._verify_item(vault, item) or \
@@ -470,7 +470,7 @@ class Model(object):
         assert vault in self._private_keys
         clear = item.pop('payload')
         item['payload'] = payload = {}
-        payload['type'] = 'EncryptedItem'
+        payload['_type'] = 'EncryptedItem'
         payload['algo'] = 'aes-cbc-pkcs7'
         iv = crypto.random_bytes(16)
         payload['iv'] = base64.encode(iv)
@@ -536,10 +536,10 @@ class Model(object):
         """Create a new empty item."""
         item = {}
         item['id'] = crypto.random_uuid()
-        item['type'] = 'Item'
+        item['_type'] = 'Item'
         item['vault'] = vault
         item['payload'] = payload = {}
-        payload['type'] = ptype
+        payload['_type'] = ptype
         payload.update(kwargs)
         return item
 
@@ -729,7 +729,7 @@ class Model(object):
             raise ValidationError('Name must be 0 < length <= 100 characters')
         if not 0 < len(password) <= 100:
             raise ValidationError('Password must be 0 < length <= 100 characters')
-        if isinstance(password, compat.text_type):
+        if isinstance(password, six.text_type):
             password = password.encode('utf8')
         vault = {}
         if uuid is None:
@@ -799,7 +799,7 @@ class Model(object):
         # removed from the sqlite database file. However, quite likely the
         # data is still on the disk, at least for some time. So this is not
         # a secure delete.
-        self.store.execute('vaults', 'VACUUM')
+        self.store.execute('VACUUM')
         del self.vaults[uuid]
         del self._private_keys[uuid]
         del self._version_cache[uuid]
@@ -820,19 +820,19 @@ class Model(object):
         stats['linear_history_size'] = linsize
         fullsize = sum((len(h) for h in self._full_history[uuid].items()))
         stats['full_history_size'] = fullsize
-        result = self.store.execute('items', """
+        result = self.store.execute("""
                     SELECT COUNT(*) FROM items WHERE $vault = ?
                     """, (uuid,))
         stats['total_items'] = result[0]
-        result = self.store.execute('items', """
+        result = self.store.execute("""
                     SELECT COUNT(*) FROM items WHERE $vault = ?
-                    AND $payload$type = 'Certificate'
+                    AND $payload$_type = 'Certificate'
                     """, (uuid,))
         stats['total_certificates'] = result[0]
-        result = self.store.execute('items', """
+        result = self.store.execute("""
                     SELECT COUNT(*) FROM
-                    (SELECT DISTINCT $payload$node FROM items
-                     WHERE $vault = ? AND $payload$type = 'Certificate')
+                    (SELECT DISTINCT $origin$node FROM items
+                     WHERE $vault = ? AND $payload$_type = 'Certificate')
                     """, (uuid,))
         stats['total_nodes'] = result[0]
         stats['trusted_nodes'] = len(self._trusted_certs[uuid])
@@ -850,7 +850,7 @@ class Model(object):
         assert uuid in self._private_keys
         if len(self._private_keys[uuid]) > 0:
             return
-        if isinstance(password, compat.text_type):
+        if isinstance(password, six.text_type):
             password = password.encode('utf8')
         for key in ('sign', 'encrypt'):
             keyinfo = self.vaults[uuid]['keys'][key]
@@ -1070,7 +1070,7 @@ class Model(object):
         we know of."""
         if vault not in self.vaults:
             raise NotFound('No such vault: {0}'.format(vault))
-        vector = self.store.execute('items', """
+        vector = self.store.execute("""
                     SELECT $origin$node,MAX($origin$seqnr)
                     FROM items
                     WHERE $vault = ?
@@ -1086,14 +1086,13 @@ class Model(object):
                 raise ModelError('Illegal vector')
             for elem in vector:
                 if not isinstance(elem, (tuple, list)) or len(elem) != 2 or \
-                        not isinstance(elem[0], compat.string_types) or \
-                        not isinstance(elem[1], compat.integer_types):
+                        not isinstance(elem[0], six.string_types) or \
+                        not isinstance(elem[1], six.integer_types):
                     raise ModelError('Illegal vector')
         query = '$vault = ?'
         args = [vault]
         if vector is not None:
-            nodes = self.store.execute('items',
-                            'SELECT DISTINCT $origin$node FROM items')
+            nodes = self.store.execute('SELECT DISTINCT $origin$node FROM items')
             terms = []
             vector = dict(vector)
             for node, in nodes:
@@ -1113,7 +1112,7 @@ class Model(object):
         vres = va_item.validate(item)
         if not vres:
             raise ValidationError('Invalid item: {0}'.format(vres.error))
-        ptype = item['payload']['type']
+        ptype = item['payload']['_type']
         if ptype == 'Certificate':
             vres = va_cert.validate(item)
             if not vres:
@@ -1122,7 +1121,7 @@ class Model(object):
             self._log.debug('imported certificate, re-calculating trust')
             self._calculate_trust(item['vault'])
             # Find items that are signed by this certificate
-            query = "$vault = ? AND $payload$type = 'EncryptedItem'" \
+            query = "$vault = ? AND $payload$_type = 'EncryptedItem'" \
                     " AND $origin$node = ?"
             args = (vault, item['payload']['node'])
             items = self.store.findall('items', query, args)
@@ -1167,7 +1166,7 @@ class Model(object):
         # If we are adding certs we need to add them first and re-calculate
         # trust before adding the other items.
         certs = [ item for item in items
-                  if item['payload']['type'] == 'Certificate'
+                  if item['payload']['_type'] == 'Certificate'
                         and va_cert.match(item) ]
         if certs:
             # It is safe to import any certificate. Certificates require
@@ -1179,7 +1178,7 @@ class Model(object):
             self._log.debug('imported {} certificates and recalculated trust', len(certs))
             # Some items may have become exposed by the certs. Find items
             # that were signed by the certs we just added.
-            query = "$vault = ? AND $payload$type = 'EncryptedItem'"
+            query = "$vault = ? AND $payload$_type = 'EncryptedItem'"
             query += ' AND (%s)' % ' OR '.join([ '$origin$node = ?' ] * len(certs))
             args = [ vault ]
             args += [ cert['payload']['node'] for cert in certs ]
@@ -1190,7 +1189,7 @@ class Model(object):
         # Now see which items are valid under the possibly wider set of
         # certificates and add them
         encitems = [ item for item in items
-                     if item['payload']['type'] == 'EncryptedItem'
+                     if item['payload']['_type'] == 'EncryptedItem'
                             and va_encitem.match(item) ]
         with self.store.begin():
             for item in encitems:

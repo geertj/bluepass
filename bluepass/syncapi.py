@@ -664,10 +664,10 @@ class SyncApiServer(HttpServer):
             context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
             context.set_ciphers('ADH+AES')
             context.load_dh_params(dhparams)
-            sslargs = {'context': context}
+            sslargs = {'ssl': context}
         else:
-            sslargs = {'ciphers': 'ADH+AES', 'dh_params': dhparams}
-        super(SyncApiServer, self).listen(address, ssl=True, **sslargs)
+            sslargs = {'ssl': True, 'ciphers': 'ADH+AES', 'dh_params': dhparams}
+        super(SyncApiServer, self).listen(address, **sslargs)
 
 
 class SyncApiPublisher(Fiber):
@@ -727,7 +727,7 @@ class SyncApiPublisher(Fiber):
         nodename = self._get_hostname()
         vaults = model.get_vaults()
         for vault in vaults:
-            addr = gruvi.getsockname(self.server.transport)
+            addr = self.server.transport.get_extra_info('sockname')
             locator.register(vault['node'], nodename, vault['id'], vault['name'], addr)
             log.debug('published node {}', vault['node'])
             self.published_nodes.add(vault['node'])
@@ -735,7 +735,7 @@ class SyncApiPublisher(Fiber):
         while not stopped:
             timeout = self.allow_pairing_until - time.time() \
                         if self.allow_pairing else None
-            entry = self.queue.get(timeout)
+            entry = self.queue.get(timeout=timeout)
             if entry:
                 event, args = entry
                 log.debug('processing event: {}', event)
@@ -766,7 +766,7 @@ class SyncApiPublisher(Fiber):
                     properties = {}
                     if self.allow_pairing:
                         properties['visible'] = 'true'
-                    addr = gruvi.getsockname(self.server.transport)
+                    addr = self.server.transport.get_extra_info('sockname')
                     locator.register(node, nodename, vault['id'], vault['name'],
                                      addr, properties)
                     self.published_nodes.add(node)

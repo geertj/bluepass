@@ -85,7 +85,7 @@ class JsonRpcHandler(object):
 
     def send_response(self, result):
         response = jsonrpc.create_response(self.message, result)
-        self.protocol.send_message(self.transport, response)
+        self.protocol.send_message(response)
 
     def send_notification(self, name, *args):
         message = jsonrpc.create_notification(name, args)
@@ -96,7 +96,7 @@ class JsonRpcHandler(object):
         self._local.protocol = protocol
         self._local.transport = transport
 
-    def __call__(self, message, protocol, transport):
+    def __call__(self, message, transport, protocol):
         method = message.get('method')
         if method is None:
             self._log.error('message without "method"')
@@ -130,6 +130,7 @@ class JsonRpcHandler(object):
         try:
             result = handler(*params)
         except Exception as e:
+            self._log.exception('exception in handler')
             return self.create_error(message, e)
         self._log.debug('handler completed succesfully')
-        return jsonrpc.create_response(message, result)
+        self.send_response(result)

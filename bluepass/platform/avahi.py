@@ -11,7 +11,7 @@ import logging
 
 import gruvi
 from gruvi import txdbus, compat
-from gruvi.dbus import DBusClient, DBusError
+from gruvi.dbus import DbusClient as DBusClient, DbusError as DBusError
 from bluepass.locator import ZeroconfLocationSource, LocationError
 
 # We do not import "avahi" because it depends on python-dbus which is
