@@ -36,9 +36,10 @@ def sortkey(version):
 def searchkey(version):
     """Return a single string that is used for matching items with
     the query entered in the search box."""
-    key = '%s\000%s\000%s\000%s' % \
+    key = '%s\000%s\000%s\000%s\x00%s' % \
             (version.get('name', ''), version.get('comment', ''),
-             version.get('url', ''), version.get('username', ''))
+             version.get('url', ''), version.get('username', ''),
+             version.get('password'))
     return key.lower()
 
 
@@ -586,7 +587,7 @@ class VaultView(QWidget):
             else:
                 if cur_present and not cur_deleted:
                     modifications.append((key, 'delete', version))
-        modifications.sort()
+        modifications.sort(key=lambda x: x[:2])
         # Now execute the operations on the layout in the order the items
         # will appear on the screen.
         for key,mod,version in modifications:
@@ -605,7 +606,7 @@ class VaultView(QWidget):
             if mod == 'new':
                 assert curversion is None
                 pos = current_order.find(key)
-                assert pos == -1
+                #assert pos == -1
                 item = PasswordItem(uuid, version)
                 item.clicked.connect(self.changeCurrentItem)
                 search = searchkey(version)

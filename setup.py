@@ -137,6 +137,7 @@ def main():
         install_requires = ['pycparser', 'cffi', 'gruvi', 'six'],
         entry_points = {'console_scripts': ['bluepass = bluepass.main:main']},
         test_suite = 'nose.collector',
+        zip_safe = False,
         **version_info
     )
 
